@@ -121,29 +121,28 @@ def build_profile(
 
                 bytes_moved = 0.0
 
-            if (roofline and use_rocprof) and (('compute_values' in locals() and compute_values and memory_values) or arch.arch_name != "gfx942"):
-                runtime_s = result["mean_ms"] / 1000.0
-                achieved_gflops = flops / runtime_s / 1e9 if runtime_s > 0 else 0.0
-                achieved_bandwidth = bytes_moved / runtime_s / 1e9 if runtime_s > 0 else 0.0
+            runtime_s = result["mean_ms"] / 1000.0
+            achieved_gflops = flops / runtime_s / 1e9 if runtime_s > 0 else 0.0
+            achieved_bandwidth = bytes_moved / runtime_s / 1e9 if runtime_s > 0 else 0.0
 
-                ai = flops / bytes_moved if bytes_moved > 0 else 0.0
+            ai = flops / bytes_moved if bytes_moved > 0 else 0.0
 
-                peak_compute = arch.peak_fp32_flops() / 1e9
-                peak_bandwidth = memory_bandwidth_gbps or arch.theoretical_peak_bandwidth()
+            peak_compute = arch.peak_fp32_flops() / 1e9
+            peak_bandwidth = memory_bandwidth_gbps or arch.theoretical_peak_bandwidth()
 
-                bound = "compute"
-                if peak_compute and peak_bandwidth and bytes_moved > 0:
-                    if peak_bandwidth * ai < peak_compute:
-                        bound = "memory"
+            bound = "compute"
+            if peak_compute and peak_bandwidth and bytes_moved > 0:
+                if peak_bandwidth * ai < peak_compute:
+                    bound = "memory"
 
-                roofline_data = {
-                    "flops": flops,
-                    "bytes": bytes_moved,
-                    "arithmetic_intensity": ai,
-                    "achieved_gflops": achieved_gflops,
-                    "achieved_bandwidth_gbps": achieved_bandwidth,
-                    "bound": bound,
-                }
+            roofline_data = {
+                "flops": flops,
+                "bytes": bytes_moved,
+                "arithmetic_intensity": ai,
+                "achieved_gflops": achieved_gflops,
+                "achieved_bandwidth_gbps": achieved_bandwidth,
+                "bound": bound,
+            }
         except Exception:
             roofline_data = None
 
