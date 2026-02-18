@@ -81,13 +81,19 @@ def is_runtime_kernel(name: str) -> bool:
 def run_with_rocprof_counters(cmd: str, metrics: list[str], debug: bool = False):
     """Run rocprofv3 in counter mode and return metric dict."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        metric_arg = ",".join(metrics)
+        # Create YAML counter configuration for ROCm 7.x
+        counter_file = os.path.join(tmpdir, "counters.yaml")
+        with open(counter_file, "w") as f:
+            f.write("pmc:\n")
+            for m in metrics:
+                f.write(f"  - {m}\n")
+
         rocprof_cmd = [
             "rocprofv3",
             "--kernel-trace",
             "--stats",
-            "--pmc",
-            metric_arg,
+            "-i",
+            counter_file,
             "-d",
             tmpdir,
             "-f",
