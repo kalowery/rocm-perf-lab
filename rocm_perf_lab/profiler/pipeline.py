@@ -69,21 +69,29 @@ def build_profile(
 
             # Architecture-specific roofline handling
             if arch.arch_name == "gfx942":
-                metrics = [
+
+                compute_metrics = [
                     "SQ_INSTS_VALU_FMA_F32",
                     "SQ_INSTS_VALU_ADD_F32",
                     "SQ_INSTS_VALU_MUL_F32",
                     "SQ_INSTS_VALU_MFMA_MOPS_F32",
+                ]
+
+                memory_metrics = [
                     "TCC_EA0_RDREQ_32B",
                     "TCC_EA0_WRREQ_64B",
                 ]
-                metric_values = run_with_rocprof_counters(cmd, metrics, debug=debug)
 
-                if metric_values:
-                    fma = metric_values.get("SQ_INSTS_VALU_FMA_F32", 0.0)
-                    add = metric_values.get("SQ_INSTS_VALU_ADD_F32", 0.0)
-                    mul = metric_values.get("SQ_INSTS_VALU_MUL_F32", 0.0)
-                    mfma_mops = metric_values.get("SQ_INSTS_VALU_MFMA_MOPS_F32", 0.0)
+                compute_values = run_with_rocprof_counters(cmd, compute_metrics, debug=debug)
+                memory_values = run_with_rocprof_counters(cmd, memory_metrics, debug=debug)
+
+                if compute_values and memory_values:
+                    metrics = {**compute_values, **memory_values}
+
+                    fma = metrics.get("SQ_INSTS_VALU_FMA_F32", 0.0)
+                    add = metrics.get("SQ_INSTS_VALU_ADD_F32", 0.0)
+                    mul = metrics.get("SQ_INSTS_VALU_MUL_F32", 0.0)
+                    mfma_mops = metrics.get("SQ_INSTS_VALU_MFMA_MOPS_F32", 0.0)
 
                     # Scalar FLOPs
                     scalar_flops = 2.0 * fma + add + mul
@@ -93,8 +101,8 @@ def build_profile(
 
                     flops = scalar_flops + mfma_flops
 
-                    rd32 = metric_values.get("TCC_EA0_RDREQ_32B", 0.0)
-                    wr64 = metric_values.get("TCC_EA0_WRREQ_64B", 0.0)
+                    rd32 = metrics.get("TCC_EA0_RDREQ_32B", 0.0)
+                    wr64 = metrics.get("TCC_EA0_WRREQ_64B", 0.0)
 
                     bytes_moved = rd32 * 32.0 + wr64 * 64.0
 
