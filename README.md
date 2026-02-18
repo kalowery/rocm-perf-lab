@@ -185,4 +185,6 @@ schema_version = "1.0"
 
 # License
 
-TBD
+This project is licensed under the MIT License.
+
+See the [LICENSE](LICENSE) file for full terms.
