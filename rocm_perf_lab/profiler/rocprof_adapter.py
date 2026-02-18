@@ -88,30 +88,27 @@ def run_with_rocprof_counters(cmd: str, metrics: list[str], debug: bool = False)
             "rocprofv3",
             "--pmc",
             metric_arg,
-            "-d",
-            tmpdir,
-            "-f",
-            "rocpd",
             "--",
         ] + cmd.split()
 
+        # Run from controlled working directory (matches known-good manual invocation)
+        cwd = os.getcwd()
         try:
-            env = os.environ.copy()
-            env["HOME"] = tmpdir
-            env["ROCPROFILER_HOME"] = tmpdir
-            env["XDG_CACHE_HOME"] = tmpdir
+            os.chdir(tmpdir)
             if debug:
-                subprocess.run(rocprof_cmd, check=True, env=env)
+                subprocess.run(rocprof_cmd, check=True)
             else:
                 subprocess.run(
                     rocprof_cmd,
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    env=env,
                 )
         except subprocess.CalledProcessError:
+            os.chdir(cwd)
             return None
+        finally:
+            os.chdir(cwd)
 
         import glob
         db_files = glob.glob(os.path.join(tmpdir, "**/*_results.db"), recursive=True)
