@@ -33,6 +33,8 @@ def run_with_rocprof(cmd: str, debug: bool = False) -> RocprofResult:
         try:
             env = os.environ.copy()
             env["HOME"] = tmpdir
+            env["ROCPROFILER_HOME"] = tmpdir
+            env["XDG_CACHE_HOME"] = tmpdir
             if debug:
                 subprocess.run(rocprof_cmd, check=True, env=env)
             else:
@@ -96,6 +98,8 @@ def run_with_rocprof_counters(cmd: str, metrics: list[str], debug: bool = False)
         try:
             env = os.environ.copy()
             env["HOME"] = tmpdir
+            env["ROCPROFILER_HOME"] = tmpdir
+            env["XDG_CACHE_HOME"] = tmpdir
             if debug:
                 subprocess.run(rocprof_cmd, check=True, env=env)
             else:
