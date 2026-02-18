@@ -19,25 +19,20 @@ class RocprofResult:
 
 def run_with_rocprof(cmd: str, debug: bool = False) -> RocprofResult:
     with tempfile.TemporaryDirectory() as tmpdir:
-        prefix = os.path.join(tmpdir, "profile")
-
+        # Execute rocprofv3 with explicit output directory and rocpd format
         rocprof_cmd = [
             "rocprofv3",
             "--kernel-trace",
-            "-o",
-            prefix,
+            "-d",
+            tmpdir,
+            "-f",
+            "rocpd",
             "--",
-            "bash",
-            "-c",
-            cmd,
-        ]
+        ] + cmd.split()
 
         try:
             if debug:
-                subprocess.run(
-                    rocprof_cmd,
-                    check=True,
-                )
+                subprocess.run(rocprof_cmd, check=True)
             else:
                 subprocess.run(
                     rocprof_cmd,
@@ -48,11 +43,13 @@ def run_with_rocprof(cmd: str, debug: bool = False) -> RocprofResult:
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"rocprofv3 execution failed: {e}")
 
-        db_path = prefix + "_results.db"
-        if not os.path.exists(db_path):
+        # Discover generated results.db recursively
+        import glob
+        db_files = glob.glob(os.path.join(tmpdir, "**/*_results.db"), recursive=True)
+        if not db_files:
             raise RuntimeError("rocprofv3 did not produce results.db")
 
-        return parse_rocpd_sqlite(db_path)
+        return parse_rocpd_sqlite(db_files[0])
 
 
 def demangle(name: str) -> str:
@@ -79,21 +76,18 @@ def is_runtime_kernel(name: str) -> bool:
 def run_with_rocprof_counters(cmd: str, metrics: list[str], debug: bool = False):
     """Run rocprofv3 in counter mode and return metric dict."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        prefix = os.path.join(tmpdir, "profile")
-
         metric_arg = ",".join(metrics)
         rocprof_cmd = [
             "rocprofv3",
             "--stats",
-            "--metrics",
+            "--pmc",
             metric_arg,
-            "-o",
-            prefix,
+            "-d",
+            tmpdir,
+            "-f",
+            "rocpd",
             "--",
-            "bash",
-            "-c",
-            cmd,
-        ]
+        ] + cmd.split()
 
         try:
             if debug:
@@ -108,11 +102,12 @@ def run_with_rocprof_counters(cmd: str, metrics: list[str], debug: bool = False)
         except subprocess.CalledProcessError:
             return None
 
-        db_path = prefix + "_results.db"
-        if not os.path.exists(db_path):
+        import glob
+        db_files = glob.glob(os.path.join(tmpdir, "**/*_results.db"), recursive=True)
+        if not db_files:
             return None
 
-        return parse_rocpd_metrics(db_path, metrics)
+        return parse_rocpd_metrics(db_files[0], metrics)
 
 
 def parse_rocpd_metrics(db_path: str, metrics: list[str]):
