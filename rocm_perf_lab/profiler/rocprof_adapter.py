@@ -31,14 +31,17 @@ def run_with_rocprof(cmd: str, debug: bool = False) -> RocprofResult:
         ] + cmd.split()
 
         try:
+            env = os.environ.copy()
+            env["HOME"] = tmpdir
             if debug:
-                subprocess.run(rocprof_cmd, check=True)
+                subprocess.run(rocprof_cmd, check=True, env=env)
             else:
                 subprocess.run(
                     rocprof_cmd,
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    env=env,
                 )
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"rocprofv3 execution failed: {e}")
@@ -90,14 +93,17 @@ def run_with_rocprof_counters(cmd: str, metrics: list[str], debug: bool = False)
         ] + cmd.split()
 
         try:
+            env = os.environ.copy()
+            env["HOME"] = tmpdir
             if debug:
-                subprocess.run(rocprof_cmd, check=True)
+                subprocess.run(rocprof_cmd, check=True, env=env)
             else:
                 subprocess.run(
                     rocprof_cmd,
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    env=env,
                 )
         except subprocess.CalledProcessError:
             return None
