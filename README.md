@@ -3,6 +3,8 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
+![CI](https://github.com/kalowery/rocm-perf-lab/actions/workflows/ci.yml/badge.svg)
+![PyPI](https://img.shields.io/pypi/v/rocm-perf-lab)
 
 **Hardware-aware performance engineering toolkit for ROCm (AMD GPUs).**
 
@@ -159,6 +161,26 @@ CV classification:
 - No double profiling
 - Static-feature pruning only
 - Low R² warning if model unreliable
+
+---
+
+# Roofline Analysis
+
+Optional counter-based roofline modeling:
+
+```bash
+rocm-perf profile ./kernel --roofline
+```
+
+Computes:
+
+- FP32 FLOPs (from SQ_INSTS_VALU)
+- DRAM bytes (TCC_READ/WRITE_BYTES)
+- Arithmetic intensity
+- Achieved GFLOPs
+- Memory vs compute bound classification
+
+Gracefully degrades if counters unavailable.
 
 ---
 
