@@ -67,16 +67,53 @@ def build_profile(
         try:
             from rocm_perf_lab.profiler.rocprof_adapter import run_with_rocprof_counters
 
-            metrics = ["SQ_INSTS_VALU", "TCC_READ_BYTES", "TCC_WRITE_BYTES"]
-            metric_values = run_with_rocprof_counters(cmd, metrics, debug=debug)
+            # Architecture-specific roofline handling
+            if arch.arch_name == "gfx942":
+                metrics = [
+                    "SQ_INSTS_VALU_FMA_F32",
+                    "SQ_INSTS_VALU_ADD_F32",
+                    "SQ_INSTS_VALU_MUL_F32",
+                    "SQ_INSTS_VALU_MFMA_MOPS_F32",
+                    "TCC_EA0_RDREQ_32B",
+                    "TCC_EA0_WRREQ_64B",
+                ]
+                metric_values = run_with_rocprof_counters(cmd, metrics, debug=debug)
 
-            if metric_values:
-                flops = 2.0 * metric_values.get("SQ_INSTS_VALU", 0.0)
-                bytes_moved = (
-                    metric_values.get("TCC_READ_BYTES", 0.0)
-                    + metric_values.get("TCC_WRITE_BYTES", 0.0)
-                )
+                if metric_values:
+                    fma = metric_values.get("SQ_INSTS_VALU_FMA_F32", 0.0)
+                    add = metric_values.get("SQ_INSTS_VALU_ADD_F32", 0.0)
+                    mul = metric_values.get("SQ_INSTS_VALU_MUL_F32", 0.0)
+                    mfma_mops = metric_values.get("SQ_INSTS_VALU_MFMA_MOPS_F32", 0.0)
 
+                    # Scalar FLOPs
+                    scalar_flops = 2.0 * fma + add + mul
+
+                    # MFMA FLOPs (each MOP represents 512 flops)
+                    mfma_flops = mfma_mops * 512.0
+
+                    flops = scalar_flops + mfma_flops
+
+                    rd32 = metric_values.get("TCC_EA0_RDREQ_32B", 0.0)
+                    wr64 = metric_values.get("TCC_EA0_WRREQ_64B", 0.0)
+
+                    bytes_moved = rd32 * 32.0 + wr64 * 64.0
+
+                else:
+                    flops = 0.0
+                    bytes_moved = 0.0
+            else:
+                # Generic fallback
+                metrics = ["SQ_INSTS_VALU"]
+                metric_values = run_with_rocprof_counters(cmd, metrics, debug=debug)
+
+                if metric_values:
+                    flops = 2.0 * metric_values.get("SQ_INSTS_VALU", 0.0)
+                else:
+                    flops = 0.0
+
+                bytes_moved = 0.0
+
+            if flops > 0:
                 runtime_s = result["mean_ms"] / 1000.0
                 achieved_gflops = flops / runtime_s / 1e9 if runtime_s > 0 else 0.0
                 achieved_bandwidth = bytes_moved / runtime_s / 1e9 if runtime_s > 0 else 0.0
@@ -87,7 +124,7 @@ def build_profile(
                 peak_bandwidth = memory_bandwidth_gbps or arch.theoretical_peak_bandwidth()
 
                 bound = "compute"
-                if peak_compute and peak_bandwidth:
+                if peak_compute and peak_bandwidth and bytes_moved > 0:
                     if peak_bandwidth * ai < peak_compute:
                         bound = "memory"
 
