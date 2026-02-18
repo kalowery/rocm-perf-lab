@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rocm-perf-lab"
+version = "0.1.0"
+description = "Hardware-aware ROCm kernel profiling and regression-based autotuning toolkit"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    { name = "ROCm Perf Lab Contributors" }
+]
+keywords = ["rocm", "amd", "gpu", "performance", "profiling", "autotuning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Scientific/Engineering"
+]
+dependencies = [
+    "numpy",
+    "scikit-learn",
+    "typer",
+    "pydantic"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "build"
+]
+
+[project.urls]
+Homepage = "https://github.com/example/rocm-perf-lab"
+Documentation = "https://github.com/example/rocm-perf-lab"
+Source = "https://github.com/example/rocm-perf-lab"
+
+[project.scripts]
+rocm-perf = "rocm_perf_lab.cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rocm_perf_lab*"]
