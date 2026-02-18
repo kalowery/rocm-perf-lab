@@ -121,7 +121,7 @@ def build_profile(
 
                 bytes_moved = 0.0
 
-            if flops > 0:
+            if (roofline and use_rocprof) and (('compute_values' in locals() and compute_values and memory_values) or arch.arch_name != "gfx942"):
                 runtime_s = result["mean_ms"] / 1000.0
                 achieved_gflops = flops / runtime_s / 1e9 if runtime_s > 0 else 0.0
                 achieved_bandwidth = bytes_moved / runtime_s / 1e9 if runtime_s > 0 else 0.0
