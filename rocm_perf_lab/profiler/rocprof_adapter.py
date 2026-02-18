@@ -14,6 +14,7 @@ class RocprofResult:
     lds_bytes: int | None
     grid: tuple[int, int, int] | None
     block: tuple[int, int, int] | None
+    agent_metadata: dict | None = None
 
 
 def run_with_rocprof(cmd: str, debug: bool = False) -> RocprofResult:
@@ -157,7 +158,7 @@ def parse_rocpd_sqlite(db_path: str) -> RocprofResult:
     # Get all dispatches ordered by duration DESC
     cur.execute(
         f"""
-        SELECT kernel_id, start, end,
+        SELECT kernel_id, agent_id, start, end,
                workgroup_size_x, workgroup_size_y, workgroup_size_z,
                grid_size_x, grid_size_y, grid_size_z,
                (end - start) AS duration
@@ -169,8 +170,10 @@ def parse_rocpd_sqlite(db_path: str) -> RocprofResult:
 
     selected = None
 
+    selected_agent_id = None
+
     for row in dispatch_rows:
-        kernel_id, start, end, wx, wy, wz, gx, gy, gz, duration_ns = row
+        kernel_id, agent_id, start, end, wx, wy, wz, gx, gy, gz, duration_ns = row
 
         # Lookup kernel metadata
         cur.execute(
@@ -189,12 +192,13 @@ def parse_rocpd_sqlite(db_path: str) -> RocprofResult:
         if not is_runtime_kernel(name):
             selected = (name, duration_ns, wx, wy, wz, gx, gy, gz,
                         arch_vgpr_count, sgpr_count, group_segment_size)
+            selected_agent_id = agent_id
             break
 
     # Fallback to longest if all were runtime kernels
     if not selected and dispatch_rows:
         row = dispatch_rows[0]
-        kernel_id, start, end, wx, wy, wz, gx, gy, gz, duration_ns = row
+        kernel_id, agent_id, start, end, wx, wy, wz, gx, gy, gz, duration_ns = row
 
         cur.execute(
             f"SELECT kernel_name, display_name, arch_vgpr_count, sgpr_count, group_segment_size FROM {kernel_info_table} WHERE id = ?;",
@@ -207,11 +211,65 @@ def parse_rocpd_sqlite(db_path: str) -> RocprofResult:
             name = display_name or (demangle(mangled_name) if mangled_name else "unknown")
             selected = (name, duration_ns, wx, wy, wz, gx, gy, gz,
                         arch_vgpr_count, sgpr_count, group_segment_size)
-
-    conn.close()
+            selected_agent_id = agent_id
 
     if not selected:
+        conn.close()
         raise RuntimeError("No valid kernel dispatch found")
+
+    # Extract agent metadata (strict validation)
+    if selected_agent_id is None:
+        conn.close()
+        raise RuntimeError("Agent ID not found for selected kernel dispatch")
+
+    cur.execute(
+        "SELECT name, extdata FROM rocpd_info_agent WHERE id = ?;",
+        (selected_agent_id,),
+    )
+    agent_row = cur.fetchone()
+
+    if not agent_row:
+        conn.close()
+        raise RuntimeError("Agent metadata not found in rocpd_info_agent")
+
+    name, extdata = agent_row
+
+    if not extdata:
+        conn.close()
+        raise RuntimeError("Agent extdata missing in rocpd_info_agent")
+
+    import json
+    try:
+        agent_json = json.loads(extdata)
+    except Exception as e:
+        conn.close()
+        raise RuntimeError(f"Failed to parse agent extdata JSON: {e}")
+
+    required = [
+        "cu_count",
+        "simd_per_cu",
+        "max_waves_per_cu",
+        "wave_front_size",
+        "max_engine_clk_fcompute",
+    ]
+
+    missing = [k for k in required if k not in agent_json]
+    if missing:
+        conn.close()
+        raise RuntimeError(
+            f"Incomplete hardware metadata in rocpd extdata; missing fields: {missing}"
+        )
+
+    agent_metadata = {
+        "arch_name": (name or "").strip().lower(),
+        "cu_count": agent_json["cu_count"],
+        "simd_per_cu": agent_json["simd_per_cu"],
+        "max_waves_per_cu": agent_json["max_waves_per_cu"],
+        "wave_size": agent_json["wave_front_size"],
+        "max_clock_mhz": agent_json["max_engine_clk_fcompute"],
+    }
+
+    conn.close()
 
     (kernel_name, duration_ns, wx, wy, wz, gx, gy, gz,
      vgpr, sgpr, lds) = selected
@@ -226,4 +284,5 @@ def parse_rocpd_sqlite(db_path: str) -> RocprofResult:
         lds_bytes=lds,
         grid=(gx, gy, gz),
         block=(wx, wy, wz),
+        agent_metadata=agent_metadata,
     )

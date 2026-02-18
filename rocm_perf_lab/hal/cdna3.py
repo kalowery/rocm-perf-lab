@@ -2,11 +2,11 @@ import math
 from .base import GPUArchitecture
 
 
-class CDNA2(GPUArchitecture):
+class CDNA3(GPUArchitecture):
     def __init__(self, **meta):
         super().__init__(**meta)
 
-        # Static architectural limits for CDNA2
+        # Static architectural limits for CDNA3 (gfx942 class)
         self.vgpr_per_simd = 65536
         self.sgpr_per_simd = 1024
         self.lds_per_cu_bytes = 65536

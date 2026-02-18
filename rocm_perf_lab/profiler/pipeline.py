@@ -1,6 +1,6 @@
 import json
 from typing import Optional
-from rocm_perf_lab.hal.detect import detect_architecture
+from rocm_perf_lab.hal.factory import build_arch_from_agent_metadata
 from .runner import run_command
 
 
@@ -21,11 +21,14 @@ def build_profile(
     roofline: bool = False,
     memory_bandwidth_gbps: Optional[float] = None,
 ):
-    arch = detect_architecture()
-
     result = run_command(cmd, runs=runs, use_rocprof=use_rocprof, debug=debug)
 
     rocprof_data = result["rocprof"]
+
+    if not rocprof_data or not rocprof_data.agent_metadata:
+        raise RuntimeError("Agent metadata missing; profiling must be run with rocprof")
+
+    arch = build_arch_from_agent_metadata(rocprof_data.agent_metadata)
 
     resources = None
     occupancy = None
@@ -80,7 +83,7 @@ def build_profile(
 
                 ai = flops / bytes_moved if bytes_moved > 0 else 0.0
 
-                peak_compute = arch.theoretical_peak_flops(clock_mhz) / 1e9 if clock_mhz else None
+                peak_compute = arch.peak_fp32_flops() / 1e9
                 peak_bandwidth = memory_bandwidth_gbps or arch.theoretical_peak_bandwidth()
 
                 bound = "compute"
@@ -107,7 +110,7 @@ def build_profile(
             "block": rocprof_data.block if rocprof_data else None,
         },
         "gpu": {
-            "architecture": arch.name,
+            "architecture": arch.arch_name,
             "wave_size": arch.wave_size,
             "compute_units": arch.compute_units,
         },
@@ -124,9 +127,8 @@ def build_profile(
         "roofline": roofline_data,
     }
 
-    if clock_mhz:
-        peak = arch.theoretical_peak_flops(clock_mhz)
-        profile_json["gpu"]["theoretical_peak_flops"] = peak
+    peak = arch.peak_fp32_flops()
+    profile_json["gpu"]["theoretical_peak_flops"] = peak
 
     # Validate schema
     try:
