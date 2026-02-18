@@ -82,6 +82,7 @@ def run_with_rocprof_counters(cmd: str, metrics: list[str], debug: bool = False)
         metric_arg = ",".join(metrics)
         rocprof_cmd = [
             "rocprofv3",
+            "--kernel-trace",
             "--stats",
             "--pmc",
             metric_arg,
