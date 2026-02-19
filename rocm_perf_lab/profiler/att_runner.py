@@ -25,7 +25,11 @@ def run_att(cmd: str, workdir: Optional[Path] = None) -> Path:
     if workdir is None:
         workdir = Path.cwd()
 
-    att_cmd = ["rocprofv3", "--att", "--", cmd]
+    import shlex
+
+    # Properly split command string into executable + args
+    cmd_list = shlex.split(cmd)
+    att_cmd = ["rocprofv3", "--att", "--"] + cmd_list
 
     try:
         subprocess.run(att_cmd, cwd=workdir, check=True)
