@@ -1,155 +1,96 @@
-# Architecture Overview — rocm-perf-lab
+# ARCHITECTURE
 
-This document explains how the major subsystems interact and why they are structured this way.
-
----
-
-# 1. High-Level Design
+## High-Level Flow
 
 ```
-CLI → Profiling Pipeline → HAL → Schema Validation
-                     ↘
-                      Autotune Engine
-                     ↘
-                      Roofline (optional)
-```
-
-The system is deliberately layered:
-
-- CLI layer is thin.
-- Pipeline layer orchestrates.
-- HAL encapsulates hardware specifics.
-- Schema layer enforces contracts.
-
-No layer should bypass the one below it.
-
----
-
-# 2. Profiling Subsystem
-
-Located in `profiler/`.
-
-Responsibilities:
-
-- Invoke rocprofv3
-- Parse rocpd SQLite output
-- Identify dominant compute kernel
-- Extract resource metadata
-- Compute occupancy
-- Optionally compute roofline
-
-Key principle:
-
-> Parsing is deterministic and architecture-neutral.
-
-Architecture-specific math is delegated to HAL.
-
----
-
-# 3. Hardware Abstraction Layer (HAL)
-
-Located in `hal/`.
-
-Purpose:
-
-- Encapsulate architectural limits
-- Provide occupancy model
-- Provide theoretical peak FLOPs
-- Provide peak bandwidth estimate
-
-The profiler must not embed hardware constants directly.
-
----
-
-# 4. Autotune Engine
-
-Located in `autotune/`.
-
-Three-phase algorithm:
-
-1. Seed
-2. Predict
-3. Confirm
-
-Critical invariant:
-
-> Pruning uses static features only.
-
-Runtime features are never used for prediction.
-
----
-
-# 5. Schema Layer
-
-Located in `schema/`.
-
-Every profile JSON is validated before returning.
-
-This guarantees:
-
-- Backward compatibility
-- Stable API surface
-- Early failure on regressions
-
----
-
-# 6. Roofline Subsystem
-
-Counter-based optional extension.
-
-Design principles:
-
-- Fully optional
-- No hard dependency on counters
-- Graceful degradation
-- Explicit FP32 assumption
-
-If counters are unavailable:
-
-```
-"roofline": null
+Application → Profiling → Roofline → DAG → ATT → Classification → Optimization Loop
 ```
 
 ---
 
-# 7. Failure Modes
+## 1. Profiling Layer
 
-The system must never crash due to:
+Uses rocprofv3 for gfx942 hardware counters.
 
-- Missing counters
-- rocprof instability
-- Absent kernel metadata
+Data captured:
+- Kernel durations
+- FLOP counts
+- Memory transactions
+- Occupancy
 
-Fallback behavior is mandatory.
-
----
-
-# 8. Design Philosophy
-
-The architecture favors:
-
-- Determinism
-- Explicit modeling
-- Strict contracts
-- Predictable CLI behavior
-
-It avoids:
-
-- Hidden heuristics
-- Architecture hardcoding
-- Silent schema drift
+Normalized into internal metric representation.
 
 ---
 
-# 9. Evolution Strategy
+## 2. Roofline Layer
 
-Future features must:
+Computes:
 
-- Respect schema validation
-- Avoid breaking pruning guarantees
-- Extend HAL instead of patching logic
-- Remain testable without ROCm hardware
+Performance = FLOPs / time
+Operational Intensity = FLOPs / bytes
+
+Compared against:
+- Peak FP throughput (MI300X)
+- Peak HBM bandwidth
+
+Determines performance regime.
 
 ---
 
-End of architecture overview.
+## 3. DAG Engine
+
+Graph constructed from:
+- HIP stream dependencies
+- Synchronization events
+
+Critical path computed via longest path algorithm.
+
+Outputs per-kernel impact weight.
+
+---
+
+## 4. ATT Deep Layer
+
+Parses ATT traces to extract:
+- Stall cycles
+- Issue slot utilization
+- Wave occupancy
+
+Feeds bottleneck classifier.
+
+---
+
+## 5. Optimization Engine
+
+Two-layer guard system:
+
+### Static Guards
+- Signature invariance
+- AST verification
+
+### Dynamic Guards
+- Successful compilation
+- Performance improvement
+- Optional numeric validation
+
+---
+
+## 6. Closed-Loop Control
+
+Optimization loop continues until:
+- No further improvement
+- Candidate pool exhausted
+- Time budget exceeded
+
+Rollback guaranteed on regression.
+
+---
+
+## Validation Context
+
+Validated on:
+- AMD Instinct MI300X
+- gfx942
+- ROCm 6.x
+
+Architecture designed for extensibility to future AMD GPUs.

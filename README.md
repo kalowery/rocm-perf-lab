@@ -1,212 +1,123 @@
-# ROCm Perf Lab
+# rocm-perf-lab
 
-![Python](https://img.shields.io/badge/python-3.9%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-alpha-orange)
-![CI](https://github.com/kalowery/rocm-perf-lab/actions/workflows/ci.yml/badge.svg)
-![PyPI](https://img.shields.io/pypi/v/rocm-perf-lab)
-
-**Hardware-aware performance engineering toolkit for ROCm (AMD GPUs).**
-
-`rocm-perf-lab` provides deterministic kernel profiling, structured JSON output, occupancy modeling, and regression-based autotuning using `rocprofv3`.
-
-Target:
-- ROCm 7.x
-- RDNA2 (gfx1030) / CDNA2
-- rocprofv3 (rocpd SQLite backend)
+**rocm-perf-lab** is a performance analysis and closed-loop optimization framework for HIP applications on AMD Instinct GPUs, validated on **MI300X (gfx942)**. It combines roofline modeling, critical-path DAG analysis, ATT-based deep profiling, and an LLM-driven guarded optimizer to deliver measurable performance gains with safety guarantees.
 
 ---
 
-# Features
+## Key Capabilities
 
-- ✅ Deterministic kernel profiling
-- ✅ rocpd SQLite parsing (ROCm 7.2+ compatible)
-- ✅ VGPR / SGPR / LDS extraction
-- ✅ Theoretical occupancy modeling
-- ✅ Stability analysis (CV classification)
-- ✅ Regression-based autotuning with pruning
-- ✅ JSON-first CLI
-- ✅ Schema validation (versioned output)
+### 1. Roofline Integration (gfx942 / MI300X)
+- Uses **rocprofv3 hardware counters** on gfx942
+- Computes achieved FLOP/s and memory bandwidth
+- Maps kernels onto device-specific roofline
+- Identifies compute-bound vs memory-bound regimes
 
----
+### 2. Critical-Path DAG Engine
+- Builds a kernel-level execution DAG
+- Computes the true critical path
+- Quantifies slack and overlap potential
+- Prioritizes optimizations by end-to-end impact
 
-# Architecture
+### 3. ATT-Based Deep Analysis
+- Integrates **AMD Trace Tool (ATT)** data
+- Wave occupancy, VALU/MFMA utilization
+- Memory stalls, cache behavior
+- ISA-level efficiency insights
 
-```mermaid
-flowchart TD
-    A[User CLI] --> B[Profile Pipeline]
-    B --> C[rocprofv3]
-    C --> D[rocpd SQLite DB]
-    D --> E[Kernel Selection]
-    E --> F[Resource Extraction]
-    F --> G[Occupancy Model]
-    G --> H[Structured JSON]
-    H --> I[Autotune Engine]
-```
+### 4. Bottleneck Classifier
+Classifies kernels into categories:
+- Memory-bandwidth bound
+- Latency bound
+- Under-occupied
+- Divergence limited
+- Compute throughput limited
 
----
+### 5. Extended Profiling JSON
+Produces structured JSON including:
+- Kernel metrics
+- Roofline coordinates
+- DAG criticality scores
+- Bottleneck classification
+- ATT-derived features
 
-# Profiling Flow
+### 6. Guarded HIP Optimizer
+- Applies constrained HIP transformations
+- Signature enforcement (no ABI changes)
+- Compile-time validation
+- Runtime equivalence checks (optional)
 
-```mermaid
-flowchart LR
-    A[Run Binary] --> B[Collect Dispatches]
-    B --> C[Filter Runtime Kernels]
-    C --> D[Select Longest Compute]
-    D --> E[Extract VGPR/LDS]
-    E --> F[Compute Occupancy]
-    F --> G[Emit JSON]
-```
-
----
-
-# Autotuning Flow
-
-```mermaid
-flowchart TD
-    A[Search Space] --> B[Seed Phase]
-    B --> C[Fit Regression]
-    C --> D[Predict All Configs]
-    D --> E[Prune]
-    E --> F[Confirm Phase]
-    F --> G[Best Config]
-```
+### 7. LLM Closed-Loop Optimization Engine
+- Generates candidate kernel transformations
+- Enforces function signature invariants
+- Compiler-repair loop for invalid outputs
+- Accepts changes only if performance improves
+- Automatic rollback on regressions
 
 ---
 
-# Installation
+## Quickstart (MI300X / gfx942)
 
-## Development Install
-
+### 1. Build
 ```bash
-python -m venv venv
-source venv/bin/activate
-pip install -e .
+cmake -S . -B build
+cmake --build build -j
 ```
 
-Verify:
-
+### 2. Profile
 ```bash
-rocm-perf --version
+rocm-perf-lab profile ./your_app
 ```
 
----
+Generates:
+- `profile.json`
+- `roofline.json`
+- `dag.json`
+- `analysis.json`
 
-# Usage
-
-## Profile
-
+### 3. Optimize (Closed Loop)
 ```bash
-rocm-perf profile ./kernel
+rocm-perf-lab optimize ./your_app
 ```
 
-JSON output:
-
-```bash
-rocm-perf profile ./kernel --json
-```
-
-Quiet scripting mode:
-
-```bash
-rocm-perf profile ./kernel --quiet
-```
-
-Disable rocprof:
-
-```bash
-rocm-perf profile ./kernel --no-rocprof
-```
+The optimizer:
+1. Profiles kernels
+2. Ranks by critical-path impact
+3. Generates guarded HIP rewrites
+4. Rebuilds and re-measures
+5. Accepts only validated improvements
 
 ---
 
-## Autotune
+## Safety Model
 
-```bash
-rocm-perf autotune \
-  --space search_space.json \
-  --cmd-template "./kernel --bm {BLOCK_M} --bn {BLOCK_N}"
-```
-
----
-
-# Example JSON Output
-
-```json
-{
-  "schema_version": "1.0",
-  "kernel": {"name": "my_kernel"},
-  "gpu": {"architecture": "rdna2"},
-  "runtime_ms": 0.012,
-  "stability": {"cv": 0.03},
-  "resources": {"vgpr_per_thread": 16},
-  "occupancy": {"theoretical": 0.75}
-}
-```
+- No binary patching
+- No unsafe pointer rewriting
+- Function signatures preserved
+- Deterministic build verification
+- Automatic rollback on performance regression
+- Optional numerical validation hooks
 
 ---
 
-# Stability Model
+## Validation Context
 
-CV classification:
-
-- ≤ 0.05 → stable
-- ≤ 0.10 → moderate
-- > 0.10 → unstable
-
----
-
-# Autotune Guarantees
-
-- No double profiling
-- Static-feature pruning only
-- Low R² warning if model unreliable
+All architectural assumptions and counter mappings are validated against:
+- **AMD Instinct MI300X**
+- **gfx942** architecture
+- ROCm 6.x toolchain
+- rocprofv3 counter interface
 
 ---
 
-# Roofline Analysis
+## Documentation
 
-Optional counter-based roofline modeling:
-
-```bash
-rocm-perf profile ./kernel --roofline
-```
-
-Computes:
-
-- FP32 FLOPs (from SQ_INSTS_VALU)
-- DRAM bytes (TCC_READ/WRITE_BYTES)
-- Arithmetic intensity
-- Achieved GFLOPs
-- Memory vs compute bound classification
-
-Gracefully degrades if counters unavailable.
+- `docs/USER_GUIDE.md` – How to use the tool
+- `docs/DEVELOPER_GUIDE.md` – Extending and contributing
+- `docs/ARCHITECTURE.md` – Internal system design
+- `docs/WHITEPAPER.md` – Design rationale and methodology
 
 ---
 
-# Schema
+## License
 
-Profile output validated against Pydantic model.
-
-Current version:
-
-```
-schema_version = "1.0"
-```
-
----
-
-# Roadmap
-
-- Counter-based roofline integration
-- Stability gating in autotune
-- Caching repeated configs
-- PyPI release
-
----
-
-# License
-
-This project is licensed under the MIT License.
-
-See the [LICENSE](LICENSE) file for full terms.
+See LICENSE file.

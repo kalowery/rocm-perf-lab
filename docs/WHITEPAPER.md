@@ -1,215 +1,102 @@
-# ROCm Perf Lab — Technical Whitepaper
+# WHITEPAPER
 
 ## Abstract
 
-`rocm-perf-lab` is a deterministic, architecture-aware performance engineering toolkit for ROCm-based AMD GPUs. It combines structured kernel profiling, hardware resource extraction, occupancy modeling, and regression-based autotuning into a unified CLI-driven system.
-
-This whitepaper explains the internal architecture, mathematical foundations, and design decisions behind the system.
+rocm-perf-lab is a structured performance analysis and optimization framework for HIP applications targeting AMD Instinct MI300X (gfx942). It integrates hardware counter–based roofline modeling, critical-path DAG analysis, ATT-driven microarchitectural inspection, and a safety-constrained LLM optimization loop.
 
 ---
 
-# 1. Design Goals
+## Motivation
 
-The system was built around five core principles:
+Traditional GPU profiling tools provide raw metrics but lack:
+- End-to-end critical path prioritization
+- Structured bottleneck classification
+- Automated, safe optimization loops
 
-1. Determinism — identical inputs produce identical outputs.
-2. Hardware awareness — incorporate architectural constraints.
-3. Structured output — machine-consumable JSON first.
-4. Separation of static vs runtime features.
-5. Correctness before optimization.
-
----
-
-# 2. Profiling Architecture
-
-## 2.1 rocprofv3 Integration
-
-`rocm-perf-lab` uses:
-
-```
-rocprofv3 --kernel-trace
-```
-
-Output is parsed from the `rocpd` SQLite database (not CSV).
-
-### Why SQLite?
-
-- Stable schema in ROCm 7.2
-- Rich metadata (VGPR, SGPR, LDS)
-- More reliable than CSV counters
+rocm-perf-lab addresses these gaps.
 
 ---
 
-## 2.2 Kernel Selection Strategy
+## Methodology
 
-Each run may contain multiple dispatches:
+### Roofline Modeling
 
-- Runtime helper kernels
-- Memory operations
-- Compute kernel
+Using rocprofv3 counters:
 
-Selection algorithm:
+- Compute achieved FLOP/s
+- Derive operational intensity
+- Compare against MI300X ceilings
 
-1. Query all dispatches ordered by duration.
-2. Filter runtime helpers:
-   - `__amd_rocclr_*`
-   - `hip*`
-   - `hsa_*`
-3. Select longest remaining dispatch.
-4. Fallback to longest if no compute kernel found.
-
-This avoids mistakenly profiling runtime memset/fill kernels.
+Enables first-order bottleneck detection.
 
 ---
 
-# 3. Hardware Resource Extraction
+### Critical Path Analysis
 
-From `rocpd_info_kernel_symbol_*`:
+Kernel-level DAG constructed.
 
-- `arch_vgpr_count` → VGPR per thread
-- `sgpr_count` → SGPR per wave
-- `group_segment_size` → LDS per block
-
-These are architecture-level allocations, not runtime counters.
+Longest-path algorithm identifies kernels whose optimization yields global speedup.
 
 ---
 
-# 4. Occupancy Modeling
+### ATT-Based Microarchitectural Insight
 
-Occupancy is computed using a hardware abstraction layer (HAL).
+ATT traces provide per-wave stall breakdown.
 
-Inputs:
-
-- VGPR per thread
-- LDS per block
-- Threads per block
-- Architecture limits
-
-For RDNA2:
-
-Occupancy = min(
-    VGPR-limited waves,
-    LDS-limited waves,
-    hardware max waves
-)
-
-Returned as theoretical upper bound.
-
-This does not model:
-
-- Memory bandwidth limits
-- Cache behavior
-- Instruction-level stalls
+This enables:
+- Latency diagnosis
+- Occupancy tuning
+- Divergence analysis
 
 ---
 
-# 5. Stability Modeling
+### Bottleneck Classification
 
-Coefficient of variation (CV):
+Combines roofline and ATT-derived features.
 
-```
-CV = stddev / mean
-```
-
-Classification:
-
-- ≤ 5% → stable
-- ≤ 10% → moderate
-- > 10% → unstable
-
-Unstable measurements warn in human mode.
+Produces deterministic kernel bottleneck labels.
 
 ---
 
-# 6. Autotuning Architecture
+### Closed-Loop LLM Optimization
 
-## 6.1 Three-Phase Algorithm
+LLM generates HIP kernel transformations.
 
-1. Seed Phase
-   - Profile subset
-   - Build regression
+Safety mechanisms:
+- Signature invariants
+- Compile validation
+- Compiler-repair loop
+- Performance gate
+- Rollback guarantee
 
-2. Prediction Phase
-   - Use static features only
-   - Predict runtimes
-   - Prune
-
-3. Confirm Phase
-   - Profile surviving configs
-   - Select best
-
-This guarantees no unnecessary profiling.
+Only empirically validated improvements are retained.
 
 ---
 
-## 6.2 Feature Separation
+## Safety and Determinism
 
-Static (pre-profile):
+The system ensures:
 
-- ACC
-- ACC²
-- BLOCK_K
-- num_warps
-- num_stages
-- threads_per_block
+- No ABI changes
+- No unsafe transformations
+- Deterministic compilation required
+- Regression auto-reverted
 
-Runtime (post-profile):
-
-- VGPR
-- LDS
-- Occupancy
-
-Pruning uses static features only to preserve correctness.
+Optimization is empirical, not speculative.
 
 ---
 
-## 6.3 Regression Model
+## Validation
 
-Polynomial regression (degree=2).
+Evaluated on AMD Instinct MI300X (gfx942).
 
-R² < 0.75 triggers warning.
-
-This protects against unreliable pruning.
-
----
-
-# 7. JSON Schema Guarantees
-
-Profile output validated against Pydantic schema.
-
-Ensures:
-
-- Field presence
-- Type correctness
-- Version stability
-
-Current schema version:
-
-```
-schema_version = "1.0"
-```
+Demonstrated:
+- Accurate roofline placement
+- Reliable bottleneck classification
+- Stable guarded optimization loop
 
 ---
 
-# 8. Limitations
+## Conclusion
 
-- Assumes single dominant kernel.
-- Occupancy theoretical only.
-- Regression model simple by design.
-- No cross-kernel interaction modeling.
-
----
-
-# 9. Future Directions
-
-- Stability gating in autotune
-- Caching repeated configurations
-- Counter-based roofline integration
-- Multi-kernel trace segmentation
-- Packaging for PyPI release
-
----
-
-# 10. Conclusion
-
-`rocm-perf-lab` provides a principled foundation for performance engineering on ROCm. It bridges deterministic profiling with model-driven optimization while maintaining schema stability and architectural awareness.
+rocm-perf-lab combines structured GPU performance modeling with guarded AI-driven optimization to provide safe, architecture-aware performance improvement on MI300X.

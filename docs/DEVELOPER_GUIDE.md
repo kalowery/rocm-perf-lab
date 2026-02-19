@@ -1,147 +1,121 @@
-# Developer Guide — rocm-perf-lab
+# DEVELOPER GUIDE
 
-This document explains the internal structure, invariants, and extension points of the project.
+## System Overview
 
----
+rocm-perf-lab consists of the following subsystems:
 
-# 1. Project Structure
-
-```
-rocm_perf_lab/
-├── analysis/          # Regression + feature engineering
-├── autotune/          # Autotuning algorithm
-├── cli/               # Typer CLI entrypoints
-├── hal/               # Hardware abstraction layer
-├── profiler/          # rocprof integration + pipeline
-├── schema/            # Pydantic models (JSON contracts)
-```
+1. Profiling Engine (rocprofv3 integration)
+2. Roofline Analyzer (gfx942)
+3. Critical-Path DAG Engine
+4. ATT Deep Analysis Module
+5. Bottleneck Classifier
+6. Guarded HIP Optimizer
+7. LLM Closed-Loop Controller
 
 ---
 
-# 2. Core Invariants
+## Profiling Engine
 
-These must not be broken:
+Uses rocprofv3 counters specific to gfx942.
 
-1. Profile JSON must validate against schema.
-2. Static features must be separate from runtime features.
-3. Autotune must never profile all configs before pruning.
-4. Profiling must degrade gracefully if rocprof fails.
-5. JSON output must remain deterministic.
+Key metrics:
+- VALU/MFMA instruction counts
+- LDS usage
+- Global memory transactions
+- Wave occupancy
 
-If changing schema structure:
-
-- Bump schema_version.
-- Update tests.
-- Update whitepaper.
+Counters are normalized into unified metric schema.
 
 ---
 
-# 3. Profiling Pipeline
+## Roofline Module
 
-`build_profile()` is the central entrypoint.
+Inputs:
+- FLOP counters
+- DRAM bytes
+- Kernel time
 
-Flow:
+Outputs:
+- Operational intensity
+- Achieved performance
+- Bound classification
 
-1. run_command()
-2. Extract rocprof metadata
-3. Compute occupancy
-4. Optionally compute roofline
-5. Validate schema
-
-Do not bypass schema validation.
-
----
-
-# 4. Hardware Abstraction Layer (HAL)
-
-Add new architectures by:
-
-1. Creating new class in `hal/`
-2. Implementing:
-   - compute_occupancy()
-   - theoretical_peak_flops()
-3. Registering in `registry.py`
-
-Avoid hardcoding architecture values outside HAL.
+Ceilings are parameterized by device model (MI300X default).
 
 ---
 
-# 5. Autotune Algorithm
+## DAG Engine
 
-Three phases:
+Constructs graph:
+- Nodes: kernels
+- Edges: synchronization + stream dependencies
 
-1. Seed
-2. Predict
-3. Confirm
-
-Pruning must use static features only.
-
-Do not introduce runtime metrics into pruning.
-
----
-
-# 6. Roofline Integration
-
-Counter-based mode is optional.
-
-Rules:
-
-- Never break standard profiling if counters unavailable.
-- Fail silently and set roofline = None.
-- Do not assume metrics exist on all hardware.
+Computes:
+- Longest path (critical path)
+- Slack per node
+- Global speedup potential
 
 ---
 
-# 7. Testing
+## ATT Integration
 
-Run:
+ATT traces provide:
+- Wave state transitions
+- Stall reasons
+- Cache miss patterns
 
-```
-pytest
-```
-
-Test coverage includes:
-
-- Schema validation
-- Stability classification
-- Pruning logic
-- CLI smoke tests
-
-If adding features:
-
-- Add unit tests.
-- Ensure CI passes.
+Feature extractor feeds classifier.
 
 ---
 
-# 8. Release Workflow
+## Bottleneck Classifier
 
-1. Update version in:
-   - pyproject.toml
-   - __init__.py
-2. Run tests.
-3. Build wheel.
-4. Tag release.
-5. Upload via twine.
+Feature inputs:
+- Roofline distance
+- Occupancy
+- Stall breakdown
+- Divergence metrics
 
----
-
-# 9. Extension Philosophy
-
-This project prioritizes:
-
-- Determinism over cleverness
-- Correctness over micro-optimizations
-- Explicit modeling over magic heuristics
-
-Do not add fragile heuristics without strong justification.
+Outputs single bottleneck label.
 
 ---
 
-# 10. Known Limitations
+## Guarded HIP Optimizer
 
-- Single dominant kernel assumption
-- Theoretical occupancy only
-- FP32-only roofline
+Constraints:
+- Function signature identical
+- No new global state
+- No unsafe casts
 
-Future work should extend carefully.
+Validation steps:
+1. AST parse
+2. Signature check
+3. Recompile
+4. Benchmark
+
+---
+
+## LLM Controller
+
+Closed-loop flow:
+
+1. Select kernel (critical path weighted)
+2. Generate transformation proposal
+3. Enforce signature invariants
+4. Compile
+5. Repair on error
+6. Benchmark
+7. Accept if improvement > threshold
+
+All decisions logged in optimization trace JSON.
+
+---
+
+## Extending the System
+
+To add new analysis modules:
+- Register metric extractor
+- Extend JSON schema
+- Add classifier feature mapping
+
+Ensure consistency across USER_GUIDE and ARCHITECTURE docs.
