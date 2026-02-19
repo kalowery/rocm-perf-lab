@@ -43,10 +43,12 @@ def run_with_rocprof(
     trace_flag = "--trace" if output_dir is not None else "--kernel-trace"
 
     if trace_flag == "--trace":
-        # Full trace mode (produces rocpd DB by default; do not use -f rocpd)
+        # Full dispatch trace for critical-path analysis
+        # ROCm 7.x requires explicit trace types
         rocprof_cmd = [
             "rocprofv3",
-            "--trace",
+            "--hip-trace",
+            "--hsa-trace",
             "-d",
             tmpdir,
             "--",
