@@ -1,6 +1,8 @@
 import typer
 import json
 from rocm_perf_lab.profiler.pipeline import build_profile
+from rocm_perf_lab.profiler.extended_pipeline import build_extended_profile
+from rocm_perf_lab.profiler.att_runner import run_att
 from rocm_perf_lab.autotune.tuner import autotune as run_autotune
 
 app = typer.Typer(no_args_is_help=True)
@@ -30,20 +32,37 @@ def profile(
     quiet: bool = typer.Option(False, "--quiet", help="Suppress non-essential output."),
     debug: bool = typer.Option(False, "--debug", help="Enable debug output (shows rocprof logs)."),
     roofline: bool = typer.Option(False, "--roofline", help="Enable roofline analysis using hardware counters."),
+    focus_critical: bool = typer.Option(False, "--focus-critical", help="Enable critical path analysis (requires rocpd DB)."),
+    deep_analysis: bool = typer.Option(False, "--deep-analysis", help="Enable ATT deep microarchitectural analysis."),
     memory_bandwidth_gbps: float = typer.Option(None, "--memory-bandwidth-gbps", help="Override peak memory bandwidth in GB/s."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON output.")
 ):
     """Profile a ROCm kernel or binary."""
 
-    result = build_profile(
-        cmd=cmd,
-        runs=runs,
-        use_rocprof=rocprof,
-        clock_mhz=clock_mhz,
-        debug=debug,
-        roofline=roofline,
-        memory_bandwidth_gbps=memory_bandwidth_gbps,
-    )
+    if focus_critical or deep_analysis:
+        att_dispatch_dir = None
+
+        if deep_analysis:
+            typer.echo("Running ATT deep analysis (this may take time)...")
+            att_dispatch_dir = run_att(cmd)
+
+        result = build_extended_profile(
+            cmd=cmd,
+            runs=runs,
+            use_rocprof=rocprof,
+            roofline=roofline,
+            att_dispatch_dir=att_dispatch_dir,
+        )
+    else:
+        result = build_profile(
+            cmd=cmd,
+            runs=runs,
+            use_rocprof=rocprof,
+            clock_mhz=clock_mhz,
+            debug=debug,
+            roofline=roofline,
+            memory_bandwidth_gbps=memory_bandwidth_gbps,
+        )
 
     if json_output:
         typer.echo(json.dumps(result, indent=2))
