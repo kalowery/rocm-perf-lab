@@ -47,8 +47,14 @@ __global__ void naive_softmax(float* input, float* output) {
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
     size_t total = (size_t)ROWS * N;
+
+    int launch_count = 100; // default
+    if (argc > 1) {
+        launch_count = atoi(argv[1]);
+        if (launch_count <= 0) launch_count = 1;
+    }
 
     float* h_input = new float[total];
     float* h_output = new float[total];
@@ -65,7 +71,9 @@ int main() {
     dim3 grid(ROWS);
     dim3 block(THREADS_PER_ROW);
 
-    naive_softmax<<<grid, block>>>(d_input, d_output);
+    for (int i = 0; i < launch_count; ++i) {
+        naive_softmax<<<grid, block>>>(d_input, d_output);
+    }
     hipDeviceSynchronize();
 
     hipMemcpy(h_output, d_output, total * sizeof(float), hipMemcpyDeviceToHost);
@@ -76,6 +84,6 @@ int main() {
     delete[] h_input;
     delete[] h_output;
 
-    std::cout << "Softmax completed." << std::endl;
+    std::cout << "Softmax completed (launch_count=" << launch_count << ")." << std::endl;
     return 0;
 }
