@@ -81,20 +81,18 @@ def is_runtime_kernel(name: str) -> bool:
 def run_with_rocprof_counters(cmd: str, metrics: list[str], debug: bool = False):
     """Run rocprofv3 in counter mode and return metric dict."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create YAML counter configuration for ROCm 7.x
         metric_arg = ",".join(metrics)
 
         rocprof_cmd = [
             "rocprofv3",
             "--pmc",
             metric_arg,
+            "-d",
+            tmpdir,
             "--",
         ] + cmd.split()
 
-        # Run from controlled working directory (matches known-good manual invocation)
-        cwd = os.getcwd()
         try:
-            os.chdir(tmpdir)
             if debug:
                 subprocess.run(rocprof_cmd, check=True)
             else:
@@ -105,10 +103,7 @@ def run_with_rocprof_counters(cmd: str, metrics: list[str], debug: bool = False)
                     stderr=subprocess.DEVNULL,
                 )
         except subprocess.CalledProcessError:
-            os.chdir(cwd)
             return None
-        finally:
-            os.chdir(cwd)
 
         import glob
         db_files = glob.glob(os.path.join(tmpdir, "**/*_results.db"), recursive=True)
