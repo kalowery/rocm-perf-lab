@@ -129,9 +129,13 @@ Estimated Headroom Fraction: {context.get('headroom_fraction')}
 === Source Code ===
 {context['source']['code']}
 
-Provide:
-1. Bottleneck explanation
-2. Specific code-level optimizations
-3. Expected performance impact
-4. Trade-offs
+IMPORTANT OUTPUT FORMAT:
+Return ONLY a single fenced C++ block containing the FULL optimized __global__ kernel definition.
+Do NOT include explanation, commentary, or prose outside the fenced block.
+Do NOT include markdown other than the single ```cpp fenced block.
+
+The response MUST be exactly:
+```cpp
+<complete __global__ kernel definition>
+```
 """
