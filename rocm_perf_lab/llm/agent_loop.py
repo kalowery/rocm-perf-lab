@@ -55,7 +55,12 @@ def run_llm_optimization_loop(
         persist_rocpd=True,
     )
 
-    rocpd_db_path = None
+    # Detect rocpd DB inside .rocpd_profile
+    import glob
+    profile_dir = Path(".rocpd_profile")
+    db_files = glob.glob(str(profile_dir / "**/*_results.db"), recursive=True)
+    rocpd_db_path = Path(max(db_files, key=lambda p: Path(p).stat().st_mtime)) if db_files else None
+
     att_dispatch_dir = run_att(binary_cmd)
 
     extended = build_extended_profile(
@@ -66,6 +71,9 @@ def run_llm_optimization_loop(
 
     best_runtime = extended.get("runtime_ms")
     dominant_symbol = extended.get("critical_path", {}).get("dominant_symbol")
+
+    if not dominant_symbol:
+        raise RuntimeError("Critical-path analysis failed: dominant_symbol is None.")
 
     print(f"Baseline runtime: {best_runtime} ms")
 
@@ -112,9 +120,15 @@ def run_llm_optimization_loop(
             persist_rocpd=True,
         )
 
+        # Detect rocpd DB inside .rocpd_profile for candidate
+        import glob
+        profile_dir_new = Path(".rocpd_profile")
+        db_files_new = glob.glob(str(profile_dir_new / "**/*_results.db"), recursive=True)
+        rocpd_db_path_new = Path(max(db_files_new, key=lambda p: Path(p).stat().st_mtime)) if db_files_new else None
+
         extended_new = build_extended_profile(
             base_profile=base_profile_new,
-            rocpd_db_path=None,
+            rocpd_db_path=rocpd_db_path_new,
             att_dispatch_dir=run_att(str(candidate_binary)),
         )
 
