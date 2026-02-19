@@ -1,56 +1,52 @@
-# Profiling Internals
+# Profiling Internals (v2)
 
-## Kernel Selection
+## Runtime Modeling
 
-1. Query all dispatches from rocpd SQLite
-2. Sort by duration
-3. Filter runtime helpers:
-   - `__amd_rocclr_*`
-   - `hip*`
-   - `hsa_*`
-4. Select longest remaining dispatch
+Runtime derived from:
 
-Fallback to longest dispatch if no compute kernel found.
+    SUM(end - start) FROM kernels
+
+From rocpd dispatch table.
 
 ---
 
-## Resource Extraction
+## Multi-Kernel DAG
 
-From `rocpd_info_kernel_symbol_*`:
-
-- `arch_vgpr_count` → VGPR per thread
-- `sgpr_count` → SGPR per wave
-- `group_segment_size` → LDS per block
-
----
-
-## Occupancy Modeling
-
-Inputs:
-
-- VGPR per thread
-- LDS per block
-- Threads per block
-- Architecture limits
-
-Occupancy = minimum of resource constraints.
-
-This is theoretical occupancy only.
+1. Extract all kernel dispatches
+2. Build execution timeline
+3. Aggregate by symbol
+4. Compute critical path
+5. Compute dominance fraction
 
 ---
 
-## Stability Model
+## Roofline Computation
 
-Coefficient of variation (CV):
+FLOPs derived from hardware counters.
+Bytes derived from TCC_EA0_RDREQ/WRREQ with 32B/64B accounting.
 
-```
-CV = stddev / mean
-```
+Arithmetic intensity:
 
-Classification:
+    AI = FLOPs / Bytes
 
-- ≤ 0.05 → stable
-- ≤ 0.10 → moderate
-- > 0.10 → unstable
+---
 
-Repeat unstable runs under controlled conditions.
+## ATT Integration
+
+Aggregates:
+- ISA-level instruction mix
+- Stall cycles
+- Idle cycles
+- IPC
+- Memory latency
+
+Graceful failure supported.
+
+---
+
+## Headroom
+
+Headroom fraction estimates remaining microarchitectural inefficiency.
+
+High headroom → latency hiding potential.
+Low headroom → algorithmic bound likely.

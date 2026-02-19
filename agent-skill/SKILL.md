@@ -1,156 +1,119 @@
 ---
 name: rocm-perf-lab
-description: Hardware-aware ROCm kernel profiling and regression-based autotuning using rocprofv3. Use when profiling HIP/CUDA-like kernels on AMD GPUs, extracting VGPR/LDS/occupancy metrics, performing stability analysis, or running structured autotuning with pruning. Applies to ROCm 7.x environments using rocprofv3 and rocpd SQLite outputs.
+description: Multi-kernel GPU performance analysis and closed-loop optimization framework for ROCm 7.x using rocprofv3, rocpd, roofline modeling, ATT deep analysis, and dominance-aware LLM optimization.
 ---
 
-# ROCm Perf Lab Skill
+# ROCm Perf Lab Skill (v2 — Multi-Kernel Aware)
 
-Use this skill when performing structured performance engineering on ROCm-based AMD GPUs.
+Use this skill when performing structured GPU performance engineering on ROCm-based AMD GPUs.
 
-This skill assumes:
-
+Assumptions:
 - ROCm 7.x
 - rocprofv3 available
-- Single dominant kernel per execution
+- rocpd SQLite dispatch database available
+- HIP/CUDA-like GPU kernels
+- Applications may contain multiple kernels per execution
 
 ---
 
 # Core Capabilities
 
-1. Deterministic kernel profiling
-2. Kernel metadata extraction (VGPR, SGPR, LDS)
-3. Theoretical occupancy modeling
-4. Stability analysis (CV classification)
-5. Regression-based autotuning with pruning
+## 1. Deterministic GPU Runtime Modeling
+
+- GPU runtime derived from rocpd kernel dispatch timestamps
+- NOT host wall-clock time
+- Supports multi-launch workloads
+- Supports multi-kernel applications
 
 ---
 
-# Profiling Workflow
+## 2. Multi-Kernel Critical Path Analysis
 
-## Basic Profiling
+- Reconstructs dispatch DAG from rocpd
+- Identifies dominant kernel symbol
+- Computes:
+  - critical_path_ns
+  - dominant_symbol
+  - fraction (dominance fraction)
 
-Run:
+Dominance fraction:
 
-```
-rocm-perf profile <binary>
-```
+    fraction = time(dominant_kernel) / total_critical_path_time
 
-For structured output:
+Whole-application speedup ceiling:
 
-```
-rocm-perf profile <binary> --json
-```
-
-If debugging rocprof issues:
-
-```
-rocm-perf profile <binary> --debug
-```
+    1 / (1 - fraction)
 
 ---
 
-## When To Use `--no-rocprof`
+## 3. Roofline Modeling
 
-Use `--no-rocprof` when:
+Extracts:
+- FLOPs
+- Bytes
+- Arithmetic intensity
+- Achieved GFLOPs
+- Achieved GB/s
+- Bound classification (memory vs compute)
 
-- You only need coarse runtime
-- rocprof is unstable
-- Measuring full process runtime
-
-Do NOT use `--no-rocprof` when hardware metrics are required.
-
----
-
-# Interpreting Profile Output
-
-Refer to: `references/profiling.md`
-
-Key fields:
-
-- runtime_ms
-- stability.cv
-- resources.vgpr_per_thread
-- resources.lds_bytes
-- occupancy.theoretical
-
-If classification == "unstable", repeat profiling under controlled conditions.
+Supports gfx942 (MI300X / MI325) counter model.
 
 ---
 
-# Autotuning Workflow
+## 4. ATT Deep Analysis
 
-Use:
+Extracts:
+- Instruction mix (VALU, SALU, VMEM, LDS, MFMA, etc.)
+- Stall fraction
+- Idle fraction
+- IPC
+- Average memory latency
 
-```
-rocm-perf autotune \
-  --space search_space.json \
-  --cmd-template "./kernel --bm {BLOCK_M} ..."
-```
-
-Algorithm phases:
-
-1. Seed phase (profile subset)
-2. Prediction phase (static-feature regression)
-3. Confirm phase (profile pruned configs)
-
-If output contains:
-
-```
-"warning": "low_model_confidence"
-```
-
-Then regression pruning may be unreliable.
-
-See: `references/autotune.md`
+Gracefully degrades if ATT parsing fails.
 
 ---
 
-# Static vs Runtime Features
+## 5. Headroom-Based Optimization (HBO)
 
-Static features (used for pruning):
+Headroom fraction estimates microarchitectural inefficiency.
 
-- BLOCK_M
-- BLOCK_N
-- BLOCK_K
-- num_warps
-- num_stages
-- threads_per_block
-
-Runtime features (post-profile only):
-
-- VGPR
-- LDS
-- Occupancy
-
-Do not attempt to predict runtime features without profiling.
+High headroom → latency-bound or pipeline inefficiency.
+Low headroom → likely algorithmic bound.
 
 ---
 
-# Best Practices
+## 6. Closed-Loop LLM Optimization
 
-- Ensure compute kernel dominates execution
-- Avoid background load
-- Use JSON mode for automation
-- Validate R² before trusting pruning
-- Repeat unstable measurements
+Command:
 
----
+    rocm-perf llm-optimize <source.cu> "<binary>" --auto-approve
 
-# When Not To Use This Skill
-
-Do not use when:
-
-- Targeting NVIDIA CUDA
-- ROCm < 7
-- Multiple dominant kernels per execution
-- Full system performance tracing required
+Features:
+- Strict fenced C++ patch contract
+- Kernel signature preservation
+- Dominant-kernel targeting
+- Dominance-shift detection
+- Iterative refinement
+- Whole-application regression gating
+- Architectural regression detection
 
 ---
 
-# References
+## 7. Dominance-Aware Multi-Kernel Optimization
 
-- CLI details → references/cli.md
-- Profiling internals → references/profiling.md
-- Autotune mechanics → references/autotune.md
+If:
 
-Load references only when deeper detail is required.
+    critical_path.fraction < 0.7
+
+Then:
+- Whole-app ceiling limited
+- Expect dominance shifts
+- Iteratively optimize top kernels
+
+Dominance shifts automatically retarget optimization.
+
+---
+
+# CLI Overview
+
+See references/cli.md

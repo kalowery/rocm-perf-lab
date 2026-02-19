@@ -1,52 +1,51 @@
-# CLI Reference — rocm-perf-lab
+# CLI Reference — rocm-perf-lab (v2)
 
-## profile Command
+## profile
 
-```
-rocm-perf profile <binary>
-```
+    rocm-perf profile <binary>
 
-Options:
+Advanced flags:
+- --deep-analysis → Enable ATT + extended metrics
+- --roofline → Enable FLOP/byte modeling
+- --focus-critical → Restrict analysis to dominant kernel
+- --json → Structured output
+- --runs <int> → Number of measurement runs
+- --debug → Show rocprof logs
 
-- `--runs <int>` — Number of measurement runs
-- `--rocprof / --no-rocprof` — Enable or disable hardware tracing
-- `--clock-mhz <float>` — Override clock for peak FLOPs estimation
-- `--quiet` — Output runtime only
-- `--debug` — Show rocprof logs
-- `--json` — Structured JSON output
+Example:
 
-Behavior matrix:
-
-| Mode | Output |
-|------|--------|
-| default | Human summary |
-| --quiet | Single numeric runtime |
-| --json | Clean structured JSON |
-| --debug | Shows rocprof output |
+    rocm-perf profile --deep-analysis --roofline --focus-critical "./app 100"
 
 ---
 
-## autotune Command
+## llm-optimize
 
-```
-rocm-perf autotune \
-  --space search_space.json \
-  --cmd-template "./kernel --bm {BLOCK_M}"
-```
+    rocm-perf llm-optimize <source.cu> "<binary>" [--auto-approve]
 
-Options:
-
-- `--seed` — RNG seed
-- `--seed-fraction` — Fraction used for seed phase
-- `--prune-factor` — Pruning aggressiveness
-- `--json` — Structured output
+Behavior:
+1. Profile baseline
+2. Identify dominant kernel
+3. Generate LLM patch
+4. Compile variant
+5. Profile full application
+6. Apply regression detection
+7. Detect dominance shift
+8. Iterate
 
 ---
 
-## version
+## prompt
 
-```
-rocm-perf --version
-```
+    rocm-perf prompt <source.cu> "<binary>"
 
-Returns tool version.
+Generates structured hardware-grounded optimization prompt.
+
+---
+
+## autotune
+
+Regression-based parameter search:
+
+    rocm-perf autotune --space space.json --cmd-template "./kernel ..."
+
+Separate from LLM structural optimization.
