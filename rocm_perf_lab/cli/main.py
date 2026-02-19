@@ -374,5 +374,41 @@ def prompt(
     typer.echo(prompt_text)
 
 
+
+
+@app.command()
+def llm_optimize(
+    source: str,
+    binary: str,
+    max_iters: int = typer.Option(3, "--max-iters", help="Maximum LLM optimization iterations."),
+    min_improvement: float = typer.Option(0.02, "--min-improvement", help="Minimum fractional improvement required."),
+    auto_approve: bool = typer.Option(False, "--auto-approve", help="Automatically continue without user confirmation."),
+):
+    """
+    Run closed-loop LLM optimization (requires llm_callable implementation).
+    """
+    from pathlib import Path
+    from rocm_perf_lab.llm.agent_loop import run_llm_optimization_loop
+
+    source_path = Path(source)
+    if not source_path.exists():
+        typer.echo("Source file not found.")
+        raise typer.Exit(code=1)
+
+    def dummy_llm(prompt: str) -> str:
+        raise RuntimeError(
+            "No LLM provider configured. Implement llm_callable integration before using llm-optimize."
+        )
+
+    run_llm_optimization_loop(
+        source_path=source_path,
+        binary_cmd=binary,
+        llm_callable=dummy_llm,
+        max_iters=max_iters,
+        min_improvement=min_improvement,
+        auto_approve=auto_approve,
+    )
+
+
 if __name__ == "__main__":
     app()

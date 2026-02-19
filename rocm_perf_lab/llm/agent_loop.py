@@ -1,0 +1,134 @@
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Callable
+
+from rocm_perf_lab.llm.prompt_builder import build_optimization_context, build_llm_prompt
+from rocm_perf_lab.llm.patch_extractor import extract_cpp_patch
+from rocm_perf_lab.profiler.pipeline import build_profile
+from rocm_perf_lab.profiler.extended_pipeline import build_extended_profile
+from rocm_perf_lab.profiler.att_runner import run_att
+
+
+def replace_dominant_kernel(source_text: str, kernel_name: str, new_kernel_code: str) -> str:
+    kernel_base = kernel_name.split("(")[0]
+    pattern = rf"__global__\s+void\s+{kernel_base}\s*\("
+    import re
+
+    match = re.search(pattern, source_text)
+    if not match:
+        raise RuntimeError("Dominant kernel not found for replacement.")
+
+    brace_start = source_text.find("{", match.end())
+    brace_count = 0
+    i = brace_start
+    while i < len(source_text):
+        if source_text[i] == "{":
+            brace_count += 1
+        elif source_text[i] == "}":
+            brace_count -= 1
+            if brace_count == 0:
+                return source_text[:match.start()] + new_kernel_code + source_text[i+1:]
+        i += 1
+
+    raise RuntimeError("Failed to replace kernel body.")
+
+
+def run_llm_optimization_loop(
+    source_path: Path,
+    binary_cmd: str,
+    llm_callable: Callable[[str], str],
+    max_iters: int = 3,
+    min_improvement: float = 0.02,
+    auto_approve: bool = False,
+):
+    original_source = source_path.read_text()
+    best_source = original_source
+
+    print("=== Baseline Profiling ===")
+
+    base_profile = build_profile(
+        cmd=binary_cmd,
+        runs=3,
+        use_rocprof=True,
+        roofline=True,
+        persist_rocpd=True,
+    )
+
+    rocpd_db_path = None
+    att_dispatch_dir = run_att(binary_cmd)
+
+    extended = build_extended_profile(
+        base_profile=base_profile,
+        rocpd_db_path=rocpd_db_path,
+        att_dispatch_dir=att_dispatch_dir,
+    )
+
+    best_runtime = extended.get("runtime_ms")
+    dominant_symbol = extended.get("critical_path", {}).get("dominant_symbol")
+
+    print(f"Baseline runtime: {best_runtime} ms")
+
+    for i in range(1, max_iters + 1):
+        print(f"\n=== LLM Iteration {i} ===")
+
+        context = build_optimization_context(
+            source_path=source_path,
+            extended_profile=extended,
+            full_source=False,
+        )
+        prompt = build_llm_prompt(context, compact=False)
+
+        response = llm_callable(prompt)
+
+        new_kernel = extract_cpp_patch(response, dominant_symbol)
+        candidate_source = replace_dominant_kernel(best_source, dominant_symbol, new_kernel)
+
+        iter_dir = Path(".optimization") / f"llm_iter_{i}"
+        iter_dir.mkdir(parents=True, exist_ok=True)
+        candidate_path = iter_dir / source_path.name
+        candidate_path.write_text(candidate_source)
+
+        candidate_binary = iter_dir / "variant_binary"
+
+        subprocess.run(["hipcc", "-O3", str(candidate_path), "-o", str(candidate_binary)], check=True)
+
+        base_profile_new = build_profile(
+            cmd=str(candidate_binary),
+            runs=3,
+            use_rocprof=True,
+            roofline=True,
+            persist_rocpd=True,
+        )
+
+        extended_new = build_extended_profile(
+            base_profile=base_profile_new,
+            rocpd_db_path=None,
+            att_dispatch_dir=run_att(str(candidate_binary)),
+        )
+
+        new_runtime = extended_new.get("runtime_ms")
+        improvement = (best_runtime - new_runtime) / best_runtime
+
+        print(f"New runtime: {new_runtime} ms")
+        print(f"Improvement: {improvement * 100:.2f}%")
+
+        if improvement >= min_improvement:
+            print("Improvement accepted.")
+            best_runtime = new_runtime
+            best_source = candidate_source
+
+            if not auto_approve:
+                resp = input("Continue optimizing? [y/n]: ").strip().lower()
+                if resp != "y":
+                    break
+        else:
+            print("Improvement below threshold. Stopping.")
+            break
+
+    print("\n=== Optimization Complete ===")
+    print(f"Best runtime: {best_runtime} ms")
+
+    final_path = source_path.parent / (source_path.stem + "_llm_opt.cu")
+    final_path.write_text(best_source)
+    print(f"Best source written to {final_path}")
