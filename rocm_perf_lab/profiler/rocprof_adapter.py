@@ -39,9 +39,12 @@ def run_with_rocprof(
         cleanup = False
 
     # Execute rocprofv3 with explicit output directory and rocpd format
+    # Use full trace mode when persisting output (needed for critical-path DAG reconstruction)
+    trace_flag = "--trace" if output_dir is not None else "--kernel-trace"
+
     rocprof_cmd = [
         "rocprofv3",
-        "--kernel-trace",
+        trace_flag,
         "-d",
         tmpdir,
         "-f",
