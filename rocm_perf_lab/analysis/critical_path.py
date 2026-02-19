@@ -84,8 +84,8 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
     else:
         total_runtime = 0
 
-    # Allow up to 1% of total runtime as dependency gap
-    threshold_ns = int(0.01 * total_runtime)
+    # Allow up to max(50us, 1% of total runtime) as dependency gap
+    threshold_ns = max(50_000, int(0.01 * total_runtime))
 
     for b in nodes:
         best = None
