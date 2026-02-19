@@ -9,30 +9,17 @@ from rocm_perf_lab.analysis.bottleneck_classifier import classify_bottleneck
 
 
 def build_extended_profile(
-    cmd: str,
-    runs: int = 3,
-    use_rocprof: bool = True,
-    roofline: bool = True,
+    base_profile: dict,
     rocpd_db_path: Optional[Path] = None,
     att_dispatch_dir: Optional[Path] = None,
 ):
     """
-    Extended profiling pipeline that augments base profile with:
+    Augment an already-built base_profile with:
       - Critical path analysis (if rocpd_db_path provided)
       - ATT deep analysis (if att_dispatch_dir provided)
       - Bottleneck classification
       - Headroom estimation
-
-    Note: rocpd_db_path and att_dispatch_dir must be supplied by caller
-    if critical path and ATT have been collected externally.
     """
-
-    base_profile = build_profile(
-        cmd=cmd,
-        runs=runs,
-        use_rocprof=use_rocprof,
-        roofline=roofline,
-    )
 
     extended = dict(base_profile)
 

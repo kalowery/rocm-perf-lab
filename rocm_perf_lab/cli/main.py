@@ -41,23 +41,31 @@ def profile(
     """Profile a ROCm kernel or binary."""
 
     if focus_critical or deep_analysis:
-        att_dispatch_dir = None
-        rocpd_db_path = None
+        # First run base profile to generate rocpd DB
+        base_profile = build_profile(
+            cmd=cmd,
+            runs=runs,
+            use_rocprof=rocprof,
+            clock_mhz=clock_mhz,
+            debug=debug,
+            roofline=roofline,
+            memory_bandwidth_gbps=memory_bandwidth_gbps,
+        )
 
-        if deep_analysis:
-            typer.echo("Running ATT deep analysis (this may take time)...")
-            att_dispatch_dir = run_att(cmd)
+        rocpd_db_path = None
+        att_dispatch_dir = None
 
         if focus_critical:
             rocpd_db_path = detect_latest_rocpd_db()
             if rocpd_db_path is None:
                 typer.echo("Warning: rocpd database not found. Critical path analysis skipped.")
 
+        if deep_analysis:
+            typer.echo("Running ATT deep analysis (this may take time)...")
+            att_dispatch_dir = run_att(cmd)
+
         result = build_extended_profile(
-            cmd=cmd,
-            runs=runs,
-            use_rocprof=rocprof,
-            roofline=roofline,
+            base_profile=base_profile,
             rocpd_db_path=rocpd_db_path,
             att_dispatch_dir=att_dispatch_dir,
         )
