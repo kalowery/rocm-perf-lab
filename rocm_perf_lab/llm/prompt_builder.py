@@ -134,6 +134,13 @@ Return ONLY a single fenced C++ block containing the FULL optimized __global__ k
 Do NOT include explanation, commentary, or prose outside the fenced block.
 Do NOT include markdown other than the single ```cpp fenced block.
 
+STRICT REQUIREMENTS:
+- The kernel function name MUST remain exactly the same as the original.
+- The function parameter list MUST remain exactly unchanged.
+- Do NOT rename the kernel.
+- Do NOT add or remove parameters.
+- Modify ONLY the body of the kernel.
+
 The response MUST be exactly:
 ```cpp
 <complete __global__ kernel definition>
