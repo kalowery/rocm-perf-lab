@@ -42,15 +42,26 @@ def run_with_rocprof(
     # Use full trace mode when persisting output (needed for critical-path DAG reconstruction)
     trace_flag = "--trace" if output_dir is not None else "--kernel-trace"
 
-    rocprof_cmd = [
-        "rocprofv3",
-        trace_flag,
-        "-d",
-        tmpdir,
-        "-f",
-        "rocpd",
-        "--",
-    ] + cmd.split()
+    if trace_flag == "--trace":
+        # Full trace mode (produces rocpd DB by default; do not use -f rocpd)
+        rocprof_cmd = [
+            "rocprofv3",
+            "--trace",
+            "-d",
+            tmpdir,
+            "--",
+        ] + cmd.split()
+    else:
+        # Lightweight kernel-trace mode with explicit rocpd format
+        rocprof_cmd = [
+            "rocprofv3",
+            "--kernel-trace",
+            "-d",
+            tmpdir,
+            "-f",
+            "rocpd",
+            "--",
+        ] + cmd.split()
 
     try:
         env = os.environ.copy()
