@@ -78,8 +78,10 @@ def build_profile(
                 ]
 
                 memory_metrics = [
+                    "TCC_EA0_RDREQ",
+                    "TCC_EA0_WRREQ",
                     "TCC_EA0_RDREQ_32B",
-                    "TCC_EA0_WRREQ_64B",
+                    "TCC_EA0_WRREQ_32B",
                 ]
 
                 compute_values = run_with_rocprof_counters(cmd, compute_metrics, debug=debug)
@@ -101,21 +103,27 @@ def build_profile(
 
                     flops = scalar_flops + mfma_flops
 
+                    rd = metrics.get("TCC_EA0_RDREQ", 0.0)
+                    wr = metrics.get("TCC_EA0_WRREQ", 0.0)
                     rd32 = metrics.get("TCC_EA0_RDREQ_32B", 0.0)
-                    wr64 = metrics.get("TCC_EA0_WRREQ_64B", 0.0)
+                    wr32 = metrics.get("TCC_EA0_WRREQ_32B", 0.0)
 
-                    bytes_moved = rd32 * 32.0 + wr64 * 64.0
+                    # Assume remaining requests are 64B
+                    rd64 = max(rd - rd32, 0.0)
+                    wr64 = max(wr - wr32, 0.0)
+
+                    bytes_moved = rd32 * 32.0 + rd64 * 64.0 + wr32 * 32.0 + wr64 * 64.0
 
                 else:
                     flops = 0.0
                     bytes_moved = 0.0
             else:
-                # Generic fallback
+                # Generic fallback: use raw VALU instruction count as FLOP proxy
                 metrics = ["SQ_INSTS_VALU"]
                 metric_values = run_with_rocprof_counters(cmd, metrics, debug=debug)
 
                 if metric_values:
-                    flops = 2.0 * metric_values.get("SQ_INSTS_VALU", 0.0)
+                    flops = metric_values.get("SQ_INSTS_VALU", 0.0)
                 else:
                     flops = 0.0
 
