@@ -43,11 +43,10 @@ def run_with_rocprof(
     trace_flag = "--trace" if output_dir is not None else "--kernel-trace"
 
     if trace_flag == "--trace":
-        # Full dispatch trace for critical-path analysis
-        # ROCm 7.x requires explicit trace types
+        # Critical-path mode: need both kernel and HSA traces
         rocprof_cmd = [
             "rocprofv3",
-            "--hip-trace",
+            "--kernel-trace",
             "--hsa-trace",
             "-d",
             tmpdir,
