@@ -122,21 +122,39 @@ def parse_rocpd_metrics(db_path: str, metrics: list[str]):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
+    # Find pmc info table
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'rocpd_info_pmc%';")
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None
+    info_table = row[0]
+
+    # Find pmc event table
     cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'rocpd_pmc_event%';")
     row = cur.fetchone()
     if not row:
         conn.close()
         return None
-
     pmc_table = row[0]
+
+    # Build name -> pmc_id map
+    cur.execute(f"SELECT id, name FROM {info_table};")
+    id_name_rows = cur.fetchall()
+    name_to_id = {name: pid for pid, name in id_name_rows}
 
     metric_values = {}
 
     for metric in metrics:
+        pmc_id = name_to_id.get(metric)
+        if pmc_id is None:
+            metric_values[metric] = 0.0
+            continue
+
         try:
             cur.execute(
-                f"SELECT SUM(value) FROM {pmc_table} WHERE name = ?;",
-                (metric,),
+                f"SELECT SUM(value) FROM {pmc_table} WHERE pmc_id = ?;",
+                (pmc_id,),
             )
             value = cur.fetchone()[0]
             metric_values[metric] = value or 0.0
