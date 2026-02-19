@@ -15,6 +15,9 @@ class CDNA3(GPUArchitecture):
         # Derive waves per SIMD dynamically
         self.max_waves_per_simd = self.max_waves_per_cu // self.simd_per_cu
 
+        # CDNA3 FP32 VALU instructions are 256-bit wide (8 FP32 lanes)
+        self.fp32_valu_width = 8
+
     def compute_occupancy(
         self,
         vgpr_per_thread: int,

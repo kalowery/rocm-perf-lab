@@ -93,7 +93,7 @@ def build_profile(
 
                     # VALU instructions approximate scalar FP32 ops
                     # MFMA MOPS represent 512 FLOPs each
-                    flops = valu + mfma_mops * 512.0
+                    flops = valu * arch.fp32_valu_width + mfma_mops * 512.0
 
                     rd = metrics.get("TCC_EA0_RDREQ", 0.0)
                     wr = metrics.get("TCC_EA0_WRREQ", 0.0)

@@ -21,6 +21,10 @@ class GPUArchitecture(ABC):
         # Conservative default until bandwidth is calibrated per architecture
         self.peak_bandwidth_gbps: float = 50.0
 
+        # Default FP32 VALU width (number of FP32 ops per VALU instruction)
+        # Override in architecture-specific subclasses where applicable
+        self.fp32_valu_width: int = 1
+
     @abstractmethod
     def compute_occupancy(
         self,
