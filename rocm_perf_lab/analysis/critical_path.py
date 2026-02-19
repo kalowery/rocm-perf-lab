@@ -60,6 +60,21 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
             }
         )
 
+    # Handle trivial / empty cases
+    if not nodes:
+        conn.close()
+        return CriticalPathResult(
+            critical_path_ns=0,
+            critical_kernel_ids=[],
+            critical_kernel_names=[],
+            dominant_dispatch_id=None,
+            dominant_dispatch_duration_ns=0,
+            dominant_symbol_name=None,
+            dominant_symbol_fraction=0.0,
+            dispatch_contributions={},
+            symbol_contributions={},
+        )
+
     # Build adjacency and indegree
     adj = {n["id"]: [] for n in nodes}
     indegree = {n["id"]: 0 for n in nodes}
@@ -135,6 +150,20 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
                 parent[v] = u
 
     # Find max
+    if not dp:
+        conn.close()
+        return CriticalPathResult(
+            critical_path_ns=0,
+            critical_kernel_ids=[],
+            critical_kernel_names=[],
+            dominant_dispatch_id=None,
+            dominant_dispatch_duration_ns=0,
+            dominant_symbol_name=None,
+            dominant_symbol_fraction=0.0,
+            dispatch_contributions={},
+            symbol_contributions={},
+        )
+
     end_node = max(dp, key=lambda k: dp[k])
     critical_length = dp[end_node]
 
