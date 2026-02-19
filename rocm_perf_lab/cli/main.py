@@ -57,7 +57,20 @@ def profile(
         att_dispatch_dir = None
 
         if focus_critical:
-            rocpd_db_path = detect_latest_rocpd_db()
+            # If we persisted rocpd output, prefer DB inside .rocpd_profile
+            if focus_critical:
+                from pathlib import Path
+                import glob
+
+                profile_dir = Path(".rocpd_profile")
+                if profile_dir.exists():
+                    db_files = glob.glob(str(profile_dir / "**/*_results.db"), recursive=True)
+                    rocpd_db_path = Path(max(db_files, key=lambda p: Path(p).stat().st_mtime)) if db_files else None
+                else:
+                    rocpd_db_path = detect_latest_rocpd_db()
+            else:
+                rocpd_db_path = detect_latest_rocpd_db()
+
             if rocpd_db_path is None:
                 typer.echo("Warning: rocpd database not found. Critical path analysis skipped.")
 
