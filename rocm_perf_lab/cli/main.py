@@ -380,30 +380,31 @@ def prompt(
 def llm_optimize(
     source: str,
     binary: str,
+    model: str = typer.Option("gpt-4.1", "--model", help="OpenAI model name."),
+    temperature: float = typer.Option(0.2, "--temperature", help="Sampling temperature."),
     max_iters: int = typer.Option(3, "--max-iters", help="Maximum LLM optimization iterations."),
     min_improvement: float = typer.Option(0.02, "--min-improvement", help="Minimum fractional improvement required."),
     auto_approve: bool = typer.Option(False, "--auto-approve", help="Automatically continue without user confirmation."),
 ):
     """
-    Run closed-loop LLM optimization (requires llm_callable implementation).
+    Run closed-loop LLM optimization using OpenAI.
+    Requires OPENAI_API_KEY environment variable.
     """
     from pathlib import Path
     from rocm_perf_lab.llm.agent_loop import run_llm_optimization_loop
+    from rocm_perf_lab.llm.providers.openai_provider import openai_llm_callable
 
     source_path = Path(source)
     if not source_path.exists():
         typer.echo("Source file not found.")
         raise typer.Exit(code=1)
 
-    def dummy_llm(prompt: str) -> str:
-        raise RuntimeError(
-            "No LLM provider configured. Implement llm_callable integration before using llm-optimize."
-        )
+    llm_callable = openai_llm_callable(model=model, temperature=temperature)
 
     run_llm_optimization_loop(
         source_path=source_path,
         binary_cmd=binary,
-        llm_callable=dummy_llm,
+        llm_callable=llm_callable,
         max_iters=max_iters,
         min_improvement=min_improvement,
         auto_approve=auto_approve,

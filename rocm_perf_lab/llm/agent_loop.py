@@ -69,6 +69,8 @@ def run_llm_optimization_loop(
 
     print(f"Baseline runtime: {best_runtime} ms")
 
+    previous_patch = None
+
     for i in range(1, max_iters + 1):
         print(f"\n=== LLM Iteration {i} ===")
 
@@ -77,11 +79,20 @@ def run_llm_optimization_loop(
             extended_profile=extended,
             full_source=False,
         )
-        prompt = build_llm_prompt(context, compact=False)
+
+        if i == 1 or previous_patch is None:
+            prompt = build_llm_prompt(context, compact=False)
+        else:
+            prompt = build_llm_prompt(context, compact=False) + (
+                f"\n\n=== Previous Optimization Result ===\n"
+                f"Previous runtime: {best_runtime} ms\n"
+                f"Refine the previous optimization further."
+            )
 
         response = llm_callable(prompt)
 
         new_kernel = extract_cpp_patch(response, dominant_symbol)
+        previous_patch = new_kernel
         candidate_source = replace_dominant_kernel(best_source, dominant_symbol, new_kernel)
 
         iter_dir = Path(".optimization") / f"llm_iter_{i}"
