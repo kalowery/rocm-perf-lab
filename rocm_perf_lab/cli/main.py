@@ -172,15 +172,28 @@ def optimize(
 
     typer.echo("=== Baseline Extended Profiling ===")
 
-    # Run ATT first
-    att_dispatch_dir = run_att(binary_cmd)
-    rocpd_db_path = detect_latest_rocpd_db()
-
-    baseline = build_extended_profile(
+    # Run base profile first (persist rocpd for critical-path)
+    base_profile = build_profile(
         cmd=binary_cmd,
         runs=runs,
         use_rocprof=True,
         roofline=True,
+        persist_rocpd=True,
+    )
+
+    # Detect rocpd DB inside .rocpd_profile
+    from pathlib import Path
+    import glob
+
+    profile_dir = Path(".rocpd_profile")
+    db_files = glob.glob(str(profile_dir / "**/*_results.db"), recursive=True)
+    rocpd_db_path = Path(max(db_files, key=lambda p: Path(p).stat().st_mtime)) if db_files else None
+
+    # Run ATT
+    att_dispatch_dir = run_att(binary_cmd)
+
+    baseline = build_extended_profile(
+        base_profile=base_profile,
         rocpd_db_path=rocpd_db_path,
         att_dispatch_dir=att_dispatch_dir,
     )
@@ -244,14 +257,23 @@ def optimize(
 
     typer.echo("=== Re-Profiling Variant ===")
 
-    att_dispatch_dir_new = run_att(str(variant_binary))
-    rocpd_db_path_new = detect_latest_rocpd_db()
-
-    new_profile = build_extended_profile(
+    # Re-profile variant (persist rocpd)
+    base_profile_new = build_profile(
         cmd=str(variant_binary),
         runs=runs,
         use_rocprof=True,
         roofline=True,
+        persist_rocpd=True,
+    )
+
+    profile_dir_new = Path(".rocpd_profile")
+    db_files_new = glob.glob(str(profile_dir_new / "**/*_results.db"), recursive=True)
+    rocpd_db_path_new = Path(max(db_files_new, key=lambda p: Path(p).stat().st_mtime)) if db_files_new else None
+
+    att_dispatch_dir_new = run_att(str(variant_binary))
+
+    new_profile = build_extended_profile(
+        base_profile=base_profile_new,
         rocpd_db_path=rocpd_db_path_new,
         att_dispatch_dir=att_dispatch_dir_new,
     )
