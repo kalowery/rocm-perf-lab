@@ -32,33 +32,58 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    dispatch_table = _get_table(conn, "rocpd_kernel_dispatch_")
-    symbol_table = _get_table(conn, "rocpd_info_kernel_symbol_")
-
-    # Load kernel names
-    cur.execute(f"SELECT id, display_name, kernel_name FROM {symbol_table};")
-    name_map = {}
-    for kid, display, mangled in cur.fetchall():
-        name_map[kid] = display or mangled or "unknown"
-
-    # Load dispatches
-    cur.execute(
-        f"SELECT id, kernel_id, queue_id, start, end FROM {dispatch_table} ORDER BY start;"
-    )
+    # Prefer modern ROCm 7.x schema (kernels table)
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='kernels';")
+    has_kernels_table = cur.fetchone() is not None
 
     nodes = []
-    for did, kid, queue, start, end in cur.fetchall():
-        nodes.append(
-            {
-                "id": did,
-                "kernel_id": kid,
-                "queue": queue,
-                "start": start,
-                "end": end,
-                "duration": end - start,
-                "name": name_map.get(kid, "unknown"),
-            }
+
+    if has_kernels_table:
+        # Modern schema: dispatch timing in 'kernels' table
+        cur.execute(
+            "SELECT id, kernel_id, queue_id, start, end, name FROM kernels ORDER BY start;"
         )
+
+        for did, kid, queue, start, end, name in cur.fetchall():
+            nodes.append(
+                {
+                    "id": did,
+                    "kernel_id": kid,
+                    "queue": queue,
+                    "start": start,
+                    "end": end,
+                    "duration": end - start,
+                    "name": name or "unknown",
+                }
+            )
+    else:
+        # Legacy schema
+        dispatch_table = _get_table(conn, "rocpd_kernel_dispatch_")
+        symbol_table = _get_table(conn, "rocpd_info_kernel_symbol_")
+
+        # Load kernel names
+        cur.execute(f"SELECT id, display_name, kernel_name FROM {symbol_table};")
+        name_map = {}
+        for kid, display, mangled in cur.fetchall():
+            name_map[kid] = display or mangled or "unknown"
+
+        # Load dispatches
+        cur.execute(
+            f"SELECT id, kernel_id, queue_id, start, end FROM {dispatch_table} ORDER BY start;"
+        )
+
+        for did, kid, queue, start, end in cur.fetchall():
+            nodes.append(
+                {
+                    "id": did,
+                    "kernel_id": kid,
+                    "queue": queue,
+                    "start": start,
+                    "end": end,
+                    "duration": end - start,
+                    "name": name_map.get(kid, "unknown"),
+                }
+            )
 
     # Handle trivial / empty cases
     if not nodes:
