@@ -8,9 +8,12 @@ class CriticalPathResult:
     critical_path_ns: int
     critical_kernel_ids: List[int]
     critical_kernel_names: List[str]
-    dominant_kernel_name: str
-    dominant_kernel_duration_ns: int
-    contributions: Dict[str, float]
+    dominant_dispatch_id: int
+    dominant_dispatch_duration_ns: int
+    dominant_symbol_name: str
+    dominant_symbol_fraction: float
+    dispatch_contributions: Dict[int, float]
+    symbol_contributions: Dict[str, float]
 
 
 def _get_table(conn, prefix: str) -> str:
@@ -146,12 +149,23 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
     path_nodes = [next(n for n in nodes if n["id"] == pid) for pid in path_ids]
     path_names = [n["name"] for n in path_nodes]
 
-    # Per-dispatch contributions (not aggregated by name)
-    contributions = {
+    # Per-dispatch contributions
+    dispatch_contributions = {
         n["id"]: n["duration"] / critical_length for n in path_nodes
     }
 
-    dominant = max(path_nodes, key=lambda n: n["duration"])
+    # Aggregate by kernel symbol
+    symbol_totals = {}
+    for n in path_nodes:
+        symbol_totals.setdefault(n["name"], 0)
+        symbol_totals[n["name"]] += n["duration"]
+
+    symbol_contributions = {
+        name: dur / critical_length for name, dur in symbol_totals.items()
+    }
+
+    dominant_dispatch = max(path_nodes, key=lambda n: n["duration"])
+    dominant_symbol_name = max(symbol_contributions, key=lambda k: symbol_contributions[k])
 
     conn.close()
 
@@ -159,7 +173,10 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
         critical_path_ns=critical_length,
         critical_kernel_ids=path_ids,
         critical_kernel_names=path_names,
-        dominant_kernel_name=dominant["name"],
-        dominant_kernel_duration_ns=dominant["duration"],
-        contributions=contributions,
+        dominant_dispatch_id=dominant_dispatch["id"],
+        dominant_dispatch_duration_ns=dominant_dispatch["duration"],
+        dominant_symbol_name=dominant_symbol_name,
+        dominant_symbol_fraction=symbol_contributions[dominant_symbol_name],
+        dispatch_contributions=dispatch_contributions,
+        symbol_contributions=symbol_contributions,
     )
