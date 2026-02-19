@@ -49,8 +49,8 @@ def build_extended_profile(
 
         extended["critical_path"] = {
             "critical_path_ns": critical_result.critical_path_ns,
-            "dominant_symbol": critical_result.dominant_symbol,
-            "fraction": critical_result.fraction,
+            "dominant_symbol": critical_result.dominant_symbol_name,
+            "fraction": critical_result.dominant_symbol_fraction,
         }
 
     # ----------------------------
