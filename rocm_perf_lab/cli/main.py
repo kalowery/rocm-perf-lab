@@ -309,5 +309,70 @@ def optimize(
     typer.echo(f"Optimized file written to {final_path}")
 
 
+
+
+@app.command()
+def prompt(
+    source: str,
+    binary: str,
+    full_source: bool = typer.Option(False, "--full-source", help="Include full source file instead of dominant kernel only."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured optimization context as JSON."),
+    compact: bool = typer.Option(False, "--compact", help="Emit compact LLM prompt."),
+    runs: int = 3,
+):
+    """
+    Generate an LLM optimization prompt from profiling data.
+    """
+    from pathlib import Path
+    import glob
+    import json
+
+    from rocm_perf_lab.llm.prompt_builder import (
+        build_optimization_context,
+        build_llm_prompt,
+    )
+
+    source_path = Path(source)
+    if not source_path.exists():
+        typer.echo("Source file not found.")
+        raise typer.Exit(code=1)
+
+    typer.echo("=== Running Extended Profiling ===")
+
+    # Base profile with persistent rocpd
+    base_profile = build_profile(
+        cmd=binary,
+        runs=runs,
+        use_rocprof=True,
+        roofline=True,
+        persist_rocpd=True,
+    )
+
+    profile_dir = Path(".rocpd_profile")
+    db_files = glob.glob(str(profile_dir / "**/*_results.db"), recursive=True)
+    rocpd_db_path = Path(max(db_files, key=lambda p: Path(p).stat().st_mtime)) if db_files else None
+
+    att_dispatch_dir = run_att(binary)
+
+    extended = build_extended_profile(
+        base_profile=base_profile,
+        rocpd_db_path=rocpd_db_path,
+        att_dispatch_dir=att_dispatch_dir,
+    )
+
+    context = build_optimization_context(
+        source_path=source_path,
+        extended_profile=extended,
+        full_source=full_source,
+    )
+
+    if json_output:
+        typer.echo(json.dumps(context, indent=2))
+        return
+
+    prompt_text = build_llm_prompt(context, compact=compact)
+    typer.echo(prompt_text)
+
+
 if __name__ == "__main__":
     app()
