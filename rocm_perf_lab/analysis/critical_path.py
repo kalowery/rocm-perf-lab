@@ -102,16 +102,33 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
             adj[best["id"]].append(b["id"])
             indegree[b["id"]] += 1
 
-    # Longest path DP (topo by start time)
-    nodes_sorted = sorted(nodes, key=lambda x: x["start"])
+    # Longest path DP using proper topological order (Kahn's algorithm)
+    from collections import deque
+
     dp = {n["id"]: n["duration"] for n in nodes}
     parent = {n["id"]: None for n in nodes}
 
-    for n in nodes_sorted:
-        u = n["id"]
+    # Build quick lookup for node durations
+    duration_map = {n["id"]: n["duration"] for n in nodes}
+
+    # Kahn topo sort
+    indegree_copy = indegree.copy()
+    queue = deque([nid for nid, deg in indegree_copy.items() if deg == 0])
+    topo_order = []
+
+    while queue:
+        u = queue.popleft()
+        topo_order.append(u)
         for v in adj[u]:
-            if dp[u] + next(x for x in nodes if x["id"] == v)["duration"] > dp[v]:
-                dp[v] = dp[u] + next(x for x in nodes if x["id"] == v)["duration"]
+            indegree_copy[v] -= 1
+            if indegree_copy[v] == 0:
+                queue.append(v)
+
+    # DP over topo order
+    for u in topo_order:
+        for v in adj[u]:
+            if dp[u] + duration_map[v] > dp[v]:
+                dp[v] = dp[u] + duration_map[v]
                 parent[v] = u
 
     # Find max
