@@ -122,5 +122,148 @@ def autotune(
         typer.echo("WARNING: Model confidence is low (R² < 0.75). Pruning may be unreliable.")
 
 
+
+
+@app.command()
+def optimize(
+    source: str,
+    binary: str,
+    runs: int = 3,
+):
+    """
+    Optimize a standalone HIP kernel using extended profiling + loop unroll.
+    """
+    from pathlib import Path
+    import subprocess
+    import shutil
+
+    from rocm_perf_lab.analysis.optimization_score import compute_optimization_score
+    from rocm_perf_lab.optimization.transform_loop_unroll import apply_loop_unroll
+    from rocm_perf_lab.optimization.variant_manager import create_variant_dir, save_variant_source
+
+    source_path = Path(source)
+    binary_cmd = binary
+
+    if not source_path.exists():
+        typer.echo("Source file not found.")
+        raise typer.Exit(code=1)
+
+    typer.echo("=== Baseline Extended Profiling ===")
+
+    # Run ATT first
+    att_dispatch_dir = run_att(binary_cmd)
+    rocpd_db_path = detect_latest_rocpd_db()
+
+    baseline = build_extended_profile(
+        cmd=binary_cmd,
+        runs=runs,
+        use_rocprof=True,
+        roofline=True,
+        rocpd_db_path=rocpd_db_path,
+        att_dispatch_dir=att_dispatch_dir,
+    )
+
+    headroom = baseline.get("headroom_fraction", 0.0)
+    critical = baseline.get("critical_path", {})
+    dominant_symbol = critical.get("dominant_symbol")
+    critical_fraction = critical.get("fraction", 0.0)
+    bottleneck = baseline.get("bottleneck", {}).get("primary")
+    stall_fraction = baseline.get("att", {}).get("stall_fraction", 0.0)
+    runtime_baseline = baseline.get("runtime_ms", 0.0)
+
+    if dominant_symbol is None:
+        typer.echo("No dominant symbol identified. Aborting optimization.")
+        raise typer.Exit()
+
+    if headroom < 0.10 or critical_fraction < 0.20:
+        typer.echo("Optimization not worthwhile based on headroom/critical path.")
+        raise typer.Exit()
+
+    if bottleneck != "Memory Latency Bound":
+        typer.echo(f"Bottleneck is {bottleneck}. Loop unroll not applicable.")
+        raise typer.Exit()
+
+    score = compute_optimization_score(headroom, critical_fraction)
+
+    if score.priority_score < 0.05:
+        typer.echo("Priority score too low. Skipping optimization.")
+        raise typer.Exit()
+
+    typer.echo("=== Applying Loop Unroll Transformation ===")
+
+    try:
+        modified_src, factor = apply_loop_unroll(
+            source_path,
+            stall_fraction,
+            dominant_symbol,
+        )
+    except Exception as e:
+        typer.echo(f"Transformation failed: {e}")
+        raise typer.Exit()
+
+    proposal_dir = create_variant_dir(source_path.parent, 1)
+    variant_source_path = save_variant_source(
+        proposal_dir,
+        modified_src,
+        source_path,
+    )
+
+    variant_binary = proposal_dir / "variant_binary"
+
+    typer.echo("=== Compiling Variant ===")
+
+    subprocess.run([
+        "hipcc",
+        "-O3",
+        str(variant_source_path),
+        "-o",
+        str(variant_binary),
+    ], check=True)
+
+    typer.echo("=== Re-Profiling Variant ===")
+
+    att_dispatch_dir_new = run_att(str(variant_binary))
+    rocpd_db_path_new = detect_latest_rocpd_db()
+
+    new_profile = build_extended_profile(
+        cmd=str(variant_binary),
+        runs=runs,
+        use_rocprof=True,
+        roofline=True,
+        rocpd_db_path=rocpd_db_path_new,
+        att_dispatch_dir=att_dispatch_dir_new,
+    )
+
+    runtime_new = new_profile.get("runtime_ms", 0.0)
+
+    if runtime_new <= 0:
+        typer.echo("Invalid runtime for variant.")
+        raise typer.Exit()
+
+    speedup = runtime_baseline / runtime_new
+
+    typer.echo("\n=== Optimization Proposal ===")
+    typer.echo(f"Target Kernel: {dominant_symbol}")
+    typer.echo(f"Transformation: Loop Unroll (factor={factor})")
+    typer.echo(f"Baseline Runtime: {runtime_baseline:.6f} ms")
+    typer.echo(f"New Runtime:      {runtime_new:.6f} ms")
+    typer.echo(f"Speedup:          {speedup:.3f}x")
+
+    if speedup < 1.02:
+        typer.echo("Improvement < 2%. Rejecting.")
+        raise typer.Exit()
+
+    response = input("Apply change? [y/n]: ").strip().lower()
+
+    if response != "y":
+        typer.echo("Change rejected.")
+        raise typer.Exit()
+
+    final_path = source_path.parent / (source_path.stem + "_opt_v1.cu")
+    shutil.copyfile(variant_source_path, final_path)
+
+    typer.echo(f"Optimized file written to {final_path}")
+
+
 if __name__ == "__main__":
     app()
