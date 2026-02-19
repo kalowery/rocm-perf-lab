@@ -173,8 +173,8 @@ def build_profile(
                 conn = sqlite3.connect(latest_db)
                 cur = conn.cursor()
 
-                # Modern ROCm 7.x schema: kernels table
-                cur.execute("SELECT SUM(end - begin) FROM kernels")
+                # ROCm 7.x schema: kernels table uses start/end (nanoseconds)
+                cur.execute("SELECT SUM(end - start) FROM kernels")
                 row = cur.fetchone()
                 if row and row[0] is not None:
                     # timestamps are in nanoseconds
