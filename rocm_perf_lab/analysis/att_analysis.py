@@ -12,6 +12,17 @@ class AttAnalysisResult:
     ipc: float
     total_cycles: float
 
+    @staticmethod
+    def empty():
+        return AttAnalysisResult(
+            instruction_mix={},
+            stall_fraction=0.0,
+            idle_fraction=0.0,
+            avg_memory_latency=0.0,
+            ipc=0.0,
+            total_cycles=0.0,
+        )
+
 
 def _classify_instruction(isa: str) -> str:
     if isa.startswith("v_"):
@@ -51,13 +62,7 @@ def analyze_att(dispatch_dir: Path) -> AttAnalysisResult:
     memory_access_count = 0.0
 
     if not code_entries:
-        return AttResult(
-            instruction_mix={},
-            stall_fraction=0.0,
-            idle_fraction=0.0,
-            avg_memory_latency=0.0,
-            ipc=0.0,
-        )
+        return AttAnalysisResult.empty()
 
     for entry in code_entries:
         isa = entry[0]

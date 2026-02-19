@@ -70,12 +70,22 @@ def run_llm_optimization_loop(
     )
 
     best_runtime = extended.get("runtime_ms")
-    dominant_symbol = extended.get("critical_path", {}).get("dominant_symbol")
+    cp = extended.get("critical_path", {})
+    dominant_symbol = cp.get("dominant_symbol")
+    fraction = cp.get("fraction", 1.0)
 
     if not dominant_symbol:
         raise RuntimeError("Critical-path analysis failed: dominant_symbol is None.")
 
+    if fraction < 0.999:
+        max_whole_app_speedup = 1.0 / (1.0 - fraction)
+    else:
+        max_whole_app_speedup = float("inf")
+
     print(f"Baseline runtime: {best_runtime} ms")
+    print(f"[INFO] Dominant kernel: {dominant_symbol}")
+    print(f"[INFO] Dominant fraction: {fraction:.3f}")
+    print(f"[INFO] Theoretical whole-app ceiling: {max_whole_app_speedup:.2f}x")
 
     previous_patch = None
 
@@ -189,6 +199,16 @@ def run_llm_optimization_loop(
 
         new_runtime = extended_new.get("runtime_ms")
         improvement = (best_runtime - new_runtime) / best_runtime
+
+        new_cp = extended_new.get("critical_path", {})
+        new_dominant = new_cp.get("dominant_symbol")
+        new_fraction = new_cp.get("fraction", 1.0)
+
+        if new_dominant and new_dominant != dominant_symbol:
+            print("[INFO] Dominance shifted:")
+            print(f"       {dominant_symbol} → {new_dominant}")
+            dominant_symbol = new_dominant
+            fraction = new_fraction
 
         print(f"New runtime: {new_runtime} ms")
         print(f"Improvement: {improvement * 100:.2f}%")
