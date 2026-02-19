@@ -146,9 +146,10 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
     path_nodes = [next(n for n in nodes if n["id"] == pid) for pid in path_ids]
     path_names = [n["name"] for n in path_nodes]
 
-    contributions = {}
-    for n in path_nodes:
-        contributions[n["name"]] = n["duration"] / critical_length
+    # Per-dispatch contributions (not aggregated by name)
+    contributions = {
+        n["id"]: n["duration"] / critical_length for n in path_nodes
+    }
 
     dominant = max(path_nodes, key=lambda n: n["duration"])
 
