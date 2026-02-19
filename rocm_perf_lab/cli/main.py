@@ -3,6 +3,7 @@ import json
 from rocm_perf_lab.profiler.pipeline import build_profile
 from rocm_perf_lab.profiler.extended_pipeline import build_extended_profile
 from rocm_perf_lab.profiler.att_runner import run_att
+from rocm_perf_lab.profiler.rocpd_detector import detect_latest_rocpd_db
 from rocm_perf_lab.autotune.tuner import autotune as run_autotune
 
 app = typer.Typer(no_args_is_help=True)
@@ -41,16 +42,23 @@ def profile(
 
     if focus_critical or deep_analysis:
         att_dispatch_dir = None
+        rocpd_db_path = None
 
         if deep_analysis:
             typer.echo("Running ATT deep analysis (this may take time)...")
             att_dispatch_dir = run_att(cmd)
+
+        if focus_critical:
+            rocpd_db_path = detect_latest_rocpd_db()
+            if rocpd_db_path is None:
+                typer.echo("Warning: rocpd database not found. Critical path analysis skipped.")
 
         result = build_extended_profile(
             cmd=cmd,
             runs=runs,
             use_rocprof=rocprof,
             roofline=roofline,
+            rocpd_db_path=rocpd_db_path,
             att_dispatch_dir=att_dispatch_dir,
         )
     else:
