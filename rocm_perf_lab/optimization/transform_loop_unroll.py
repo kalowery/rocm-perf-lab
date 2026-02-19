@@ -28,7 +28,10 @@ def apply_loop_unroll(
 
     src = source_path.read_text()
 
-    kernel_pattern = rf"__global__\s+void\s+{kernel_name}\s*\("
+    # Extract bare kernel name (strip argument list if present)
+    kernel_base = kernel_name.split("(")[0]
+
+    kernel_pattern = rf"__global__\s+void\s+{kernel_base}\s*\("
     match = re.search(kernel_pattern, src)
 
     if not match:
