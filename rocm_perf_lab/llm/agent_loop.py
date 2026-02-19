@@ -193,10 +193,19 @@ def run_llm_optimization_loop(
         print(f"New runtime: {new_runtime} ms")
         print(f"Improvement: {improvement * 100:.2f}%")
 
+        # Regression detection
+        from rocm_perf_lab.analysis.optimization_score import detect_regression
+
+        ok_regression, regression_reasons = detect_regression(extended, extended_new)
+        if not ok_regression:
+            print(f"Rejected due to regression signals: {regression_reasons}")
+            break
+
         if improvement >= min_improvement:
             print("Improvement accepted.")
             best_runtime = new_runtime
             best_source = candidate_source
+            extended = extended_new
 
             if not auto_approve:
                 resp = input("Continue optimizing? [y/n]: ").strip().lower()
