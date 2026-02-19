@@ -76,8 +76,17 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
             adj[u].append(v)
             indegree[v] += 1
 
-    # Cross-queue inferred deps
-    threshold_ns = 5_000  # 5 microseconds
+    # Cross-queue inferred deps (scale-aware threshold)
+    if nodes:
+        global_start = min(n["start"] for n in nodes)
+        global_end = max(n["end"] for n in nodes)
+        total_runtime = global_end - global_start
+    else:
+        total_runtime = 0
+
+    # Allow up to 1% of total runtime as dependency gap
+    threshold_ns = int(0.01 * total_runtime)
+
     for b in nodes:
         best = None
         best_gap = None
@@ -89,7 +98,7 @@ def analyze_critical_path(db_path: str) -> CriticalPathResult:
                 if best_gap is None or gap < best_gap:
                     best_gap = gap
                     best = a
-        if best is not None and best_gap is not None and best_gap < threshold_ns:
+        if best is not None and best_gap is not None and best_gap <= threshold_ns:
             adj[best["id"]].append(b["id"])
             indegree[b["id"]] += 1
 
