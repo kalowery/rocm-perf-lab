@@ -151,7 +151,8 @@ def build_profile(
                 "achieved_bandwidth_gbps": achieved_bandwidth,
                 "bound": bound,
             }
-        except Exception:
+        except Exception as e:
+            print(f"[ROOFLINE ERROR] {e}")
             roofline_data = None
 
     profile_json = {
