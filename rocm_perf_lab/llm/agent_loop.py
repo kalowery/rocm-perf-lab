@@ -97,38 +97,66 @@ def run_llm_optimization_loop(
                 f"Refine the previous optimization further."
             )
 
-        response = llm_callable(prompt)
+        max_attempts = 2
+        attempt = 0
+        compile_error_text = None
 
-        new_kernel = extract_cpp_patch(response, dominant_symbol)
-        previous_patch = new_kernel
+        while attempt < max_attempts:
+            attempt += 1
 
-        # Enforce kernel signature stability
-        import re
-        def extract_signature(kernel_code: str) -> str:
-            sig_pattern = r"__global__\s+void\s+\w+\s*\((.*?)\)"
-            match = re.search(sig_pattern, kernel_code, re.DOTALL)
-            if not match:
-                raise RuntimeError("Could not extract kernel signature.")
-            return match.group(1).strip()
+            response = llm_callable(prompt)
+            new_kernel = extract_cpp_patch(response, dominant_symbol)
+            previous_patch = new_kernel
 
-        # Extract original kernel signature
-        orig_kernel_match = re.search(rf"__global__\s+void\s+{dominant_symbol.split('(')[0]}\s*\(.*?\{{", best_source, re.DOTALL)
-        if not orig_kernel_match:
-            raise RuntimeError("Original kernel definition not found for signature validation.")
+            # Enforce kernel signature stability
+            import re
+            def extract_signature(kernel_code: str) -> str:
+                sig_pattern = r"__global__\s+void\s+\w+\s*\((.*?)\)"
+                match = re.search(sig_pattern, kernel_code, re.DOTALL)
+                if not match:
+                    raise RuntimeError("Could not extract kernel signature.")
+                return match.group(1).strip()
 
-        # Extract original signature
-        orig_sig_pattern = rf"__global__\s+void\s+{dominant_symbol.split('(')[0]}\s*\((.*?)\)"
-        orig_sig_match = re.search(orig_sig_pattern, best_source, re.DOTALL)
-        if not orig_sig_match:
-            raise RuntimeError("Could not extract original kernel signature.")
-        orig_sig = orig_sig_match.group(1).strip()
+            orig_sig_pattern = rf"__global__\s+void\s+{dominant_symbol.split('(')[0]}\s*\((.*?)\)"
+            orig_sig_match = re.search(orig_sig_pattern, best_source, re.DOTALL)
+            if not orig_sig_match:
+                raise RuntimeError("Could not extract original kernel signature.")
+            orig_sig = orig_sig_match.group(1).strip()
 
-        new_sig = extract_signature(new_kernel)
+            new_sig = extract_signature(new_kernel)
 
-        if orig_sig != new_sig:
-            raise RuntimeError("Kernel signature change is not allowed.")
+            if orig_sig != new_sig:
+                prompt = build_llm_prompt(context, compact=False) + (
+                    f"\n\nThe kernel signature MUST remain exactly:\n({orig_sig})\n"
+                    "Do NOT change the parameter list. Only modify the body."
+                )
+                if attempt >= max_attempts:
+                    raise RuntimeError("Kernel signature change is not allowed.")
+                continue
 
-        candidate_source = replace_dominant_kernel(best_source, dominant_symbol, new_kernel)
+            candidate_source = replace_dominant_kernel(best_source, dominant_symbol, new_kernel)
+
+            try:
+                candidate_path = Path(".optimization") / f"llm_iter_{i}" / source_path.name
+                candidate_path.parent.mkdir(parents=True, exist_ok=True)
+                candidate_path.write_text(candidate_source)
+
+                candidate_binary = candidate_path.parent / "variant_binary"
+                subprocess.run(["hipcc", "-O3", str(candidate_path), "-o", str(candidate_binary)], check=True, capture_output=True, text=True)
+                break
+            except subprocess.CalledProcessError as e:
+                compile_error_text = e.stderr
+                prompt = build_llm_prompt(context, compact=False) + (
+                    "\n\nCompilation failed with the following error:\n"
+                    f"{compile_error_text}\n"
+                    "Fix the kernel while preserving the original signature."
+                )
+                if attempt >= max_attempts:
+                    raise
+                continue
+
+        # after successful compile
+        candidate_binary = Path(".optimization") / f"llm_iter_{i}" / "variant_binary"
 
         iter_dir = Path(".optimization") / f"llm_iter_{i}"
         iter_dir.mkdir(parents=True, exist_ok=True)
