@@ -70,7 +70,19 @@ def apply_loop_unroll(
     if not is_loop_safe(loop_body):
         raise RuntimeError("Loop deemed unsafe for unroll")
 
-    pragma = f"#pragma unroll {factor}\n"
-    modified_src = src[:loop_start] + pragma + src[loop_start:]
+    pragma = f"#pragma unroll {factor}"
+
+    # Check for existing unroll pragma immediately before loop
+    pre_region = src[max(0, loop_start - 200):loop_start]
+    existing_match = re.search(r"#pragma\s+unroll\s*\(?\d*\)?", pre_region)
+
+    if existing_match:
+        # Replace existing pragma
+        abs_start = max(0, loop_start - 200) + existing_match.start()
+        abs_end = max(0, loop_start - 200) + existing_match.end()
+        modified_src = src[:abs_start] + pragma + src[abs_end:]
+    else:
+        # Insert new pragma before loop
+        modified_src = src[:loop_start] + pragma + "\n" + src[loop_start:]
 
     return modified_src, factor
