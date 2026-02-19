@@ -50,6 +50,7 @@ def profile(
             debug=debug,
             roofline=roofline,
             memory_bandwidth_gbps=memory_bandwidth_gbps,
+            persist_rocpd=focus_critical,
         )
 
         rocpd_db_path = None

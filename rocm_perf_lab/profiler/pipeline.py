@@ -20,8 +20,19 @@ def build_profile(
     debug: bool = False,
     roofline: bool = False,
     memory_bandwidth_gbps: Optional[float] = None,
+    persist_rocpd: bool = False,
 ):
-    result = run_command(cmd, runs=runs, use_rocprof=use_rocprof, debug=debug)
+    output_dir = None
+    if persist_rocpd and use_rocprof:
+        output_dir = ".rocpd_profile"
+
+    result = run_command(
+        cmd,
+        runs=runs,
+        use_rocprof=use_rocprof,
+        debug=debug,
+        output_dir=output_dir,
+    )
 
     rocprof_data = result["rocprof"]
 

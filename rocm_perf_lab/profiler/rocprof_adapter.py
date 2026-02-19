@@ -17,44 +17,72 @@ class RocprofResult:
     agent_metadata: dict | None = None
 
 
-def run_with_rocprof(cmd: str, debug: bool = False) -> RocprofResult:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Execute rocprofv3 with explicit output directory and rocpd format
-        rocprof_cmd = [
-            "rocprofv3",
-            "--kernel-trace",
-            "-d",
-            tmpdir,
-            "-f",
-            "rocpd",
-            "--",
-        ] + cmd.split()
+def run_with_rocprof(
+    cmd: str,
+    debug: bool = False,
+    output_dir: str | None = None,
+) -> RocprofResult:
+    """
+    Run rocprofv3 in kernel-trace mode and return parsed RocprofResult.
+    If output_dir is provided, rocpd output will be written there and persisted.
+    """
 
-        try:
-            env = os.environ.copy()
-            env["HOME"] = tmpdir
-            env["ROCPROFILER_HOME"] = tmpdir
-            env["XDG_CACHE_HOME"] = tmpdir
-            if debug:
-                subprocess.run(rocprof_cmd, check=True, env=env)
-            else:
-                subprocess.run(
-                    rocprof_cmd,
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env,
-                )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"rocprofv3 execution failed: {e}")
+    tmpdir_obj = None
 
-        # Discover generated results.db recursively
-        import glob
-        db_files = glob.glob(os.path.join(tmpdir, "**/*_results.db"), recursive=True)
-        if not db_files:
-            raise RuntimeError("rocprofv3 did not produce results.db")
+    if output_dir is None:
+        tmpdir_obj = tempfile.TemporaryDirectory()
+        tmpdir = tmpdir_obj.name
+        cleanup = True
+    else:
+        os.makedirs(output_dir, exist_ok=True)
+        tmpdir = output_dir
+        cleanup = False
 
-        return parse_rocpd_sqlite(db_files[0])
+    # Execute rocprofv3 with explicit output directory and rocpd format
+    rocprof_cmd = [
+        "rocprofv3",
+        "--kernel-trace",
+        "-d",
+        tmpdir,
+        "-f",
+        "rocpd",
+        "--",
+    ] + cmd.split()
+
+    try:
+        env = os.environ.copy()
+        env["HOME"] = tmpdir
+        env["ROCPROFILER_HOME"] = tmpdir
+        env["XDG_CACHE_HOME"] = tmpdir
+        if debug:
+            subprocess.run(rocprof_cmd, check=True, env=env)
+        else:
+            subprocess.run(
+                rocprof_cmd,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+            )
+    except subprocess.CalledProcessError as e:
+        if cleanup and tmpdir_obj is not None:
+            tmpdir_obj.cleanup()
+        raise RuntimeError(f"rocprofv3 execution failed: {e}")
+
+    # Discover generated results.db recursively
+    import glob
+    db_files = glob.glob(os.path.join(tmpdir, "**/*_results.db"), recursive=True)
+    if not db_files:
+        if cleanup and tmpdir_obj is not None:
+            tmpdir_obj.cleanup()
+        raise RuntimeError("rocprofv3 did not produce results.db")
+
+    result = parse_rocpd_sqlite(db_files[0])
+
+    if cleanup and tmpdir_obj is not None:
+        tmpdir_obj.cleanup()
+
+    return result
 
 
 def demangle(name: str) -> str:

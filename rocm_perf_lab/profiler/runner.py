@@ -4,13 +4,23 @@ import statistics
 from .rocprof_adapter import run_with_rocprof
 
 
-def run_command(cmd: str, runs: int = 3, use_rocprof: bool = False, debug: bool = False):
+def run_command(
+    cmd: str,
+    runs: int = 3,
+    use_rocprof: bool = False,
+    debug: bool = False,
+    output_dir: str | None = None,
+):
     timings = []
     rocprof_data = None
 
     for _ in range(runs):
         if use_rocprof:
-            result = run_with_rocprof(cmd, debug=debug)
+            result = run_with_rocprof(
+                cmd,
+                debug=debug,
+                output_dir=output_dir,
+            )
             timings.append(result.kernel_time_ms)
             rocprof_data = result
         else:
@@ -28,5 +38,5 @@ def run_command(cmd: str, runs: int = 3, use_rocprof: bool = False, debug: bool 
         "stddev_ms": stddev,
         "cv": cv,
         "runs": runs,
-        "rocprof": rocprof_data
+        "rocprof": rocprof_data,
     }
