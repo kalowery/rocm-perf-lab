@@ -50,6 +50,15 @@ def analyze_att(dispatch_dir: Path) -> AttAnalysisResult:
     memory_latency_sum = 0.0
     memory_access_count = 0.0
 
+    if not code_entries:
+        return AttResult(
+            instruction_mix={},
+            stall_fraction=0.0,
+            idle_fraction=0.0,
+            avg_memory_latency=0.0,
+            ipc=0.0,
+        )
+
     for entry in code_entries:
         isa = entry[0]
         hit = float(entry[6])

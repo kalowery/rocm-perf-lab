@@ -44,15 +44,19 @@ def build_extended_profile(
     # ATT Deep Analysis
     # ----------------------------
     if att_dispatch_dir is not None and att_dispatch_dir.exists():
-        att_result = analyze_att(att_dispatch_dir)
+        try:
+            att_result = analyze_att(att_dispatch_dir)
 
-        extended["att"] = {
-            "instruction_mix": att_result.instruction_mix,
-            "stall_fraction": att_result.stall_fraction,
-            "idle_fraction": att_result.idle_fraction,
-            "avg_memory_latency": att_result.avg_memory_latency,
-            "ipc": att_result.ipc,
-        }
+            extended["att"] = {
+                "instruction_mix": att_result.instruction_mix,
+                "stall_fraction": att_result.stall_fraction,
+                "idle_fraction": att_result.idle_fraction,
+                "avg_memory_latency": att_result.avg_memory_latency,
+                "ipc": att_result.ipc,
+            }
+        except Exception as e:
+            print(f"[ATT WARNING] ATT analysis failed: {e}")
+            extended["att"] = {}
 
     # ----------------------------
     # Bottleneck + Headroom
