@@ -101,6 +101,33 @@ def run_llm_optimization_loop(
 
         new_kernel = extract_cpp_patch(response, dominant_symbol)
         previous_patch = new_kernel
+
+        # Enforce kernel signature stability
+        import re
+        def extract_signature(kernel_code: str) -> str:
+            sig_pattern = r"__global__\s+void\s+\w+\s*\((.*?)\)"
+            match = re.search(sig_pattern, kernel_code, re.DOTALL)
+            if not match:
+                raise RuntimeError("Could not extract kernel signature.")
+            return match.group(1).strip()
+
+        # Extract original kernel signature
+        orig_kernel_match = re.search(rf"__global__\s+void\s+{dominant_symbol.split('(')[0]}\s*\(.*?\{{", best_source, re.DOTALL)
+        if not orig_kernel_match:
+            raise RuntimeError("Original kernel definition not found for signature validation.")
+
+        # Extract original signature
+        orig_sig_pattern = rf"__global__\s+void\s+{dominant_symbol.split('(')[0]}\s*\((.*?)\)"
+        orig_sig_match = re.search(orig_sig_pattern, best_source, re.DOTALL)
+        if not orig_sig_match:
+            raise RuntimeError("Could not extract original kernel signature.")
+        orig_sig = orig_sig_match.group(1).strip()
+
+        new_sig = extract_signature(new_kernel)
+
+        if orig_sig != new_sig:
+            raise RuntimeError("Kernel signature change is not allowed.")
+
         candidate_source = replace_dominant_kernel(best_source, dominant_symbol, new_kernel)
 
         iter_dir = Path(".optimization") / f"llm_iter_{i}"
