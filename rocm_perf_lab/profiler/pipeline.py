@@ -158,6 +158,32 @@ def build_profile(
             print(f"[ROOFLINE ERROR] {e}")
             roofline_data = None
 
+    # ------------------------------------------------------------------
+    # Replace host wall-time with GPU dispatch time if rocpd is available
+    # ------------------------------------------------------------------
+    runtime_ms = result["mean_ms"]
+
+    if persist_rocpd and output_dir:
+        try:
+            import glob, sqlite3, os
+
+            db_files = glob.glob(os.path.join(output_dir, "**/*_results.db"), recursive=True)
+            if db_files:
+                latest_db = max(db_files, key=os.path.getmtime)
+                conn = sqlite3.connect(latest_db)
+                cur = conn.cursor()
+
+                # Modern ROCm 7.x schema: kernels table
+                cur.execute("SELECT SUM(end - begin) FROM kernels")
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    # timestamps are in nanoseconds
+                    runtime_ms = float(row[0]) / 1e6
+
+                conn.close()
+        except Exception as e:
+            print(f"[RUNTIME WARNING] Failed to derive GPU runtime from rocpd: {e}")
+
     profile_json = {
         "schema_version": "1.0",
         "kernel": {
@@ -170,7 +196,7 @@ def build_profile(
             "wave_size": arch.wave_size,
             "compute_units": arch.compute_units,
         },
-        "runtime_ms": result["mean_ms"],
+        "runtime_ms": runtime_ms,
         "stability": {
             "runs": result["runs"],
             "mean_ms": result["mean_ms"],
