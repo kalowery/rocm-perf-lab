@@ -2,132 +2,179 @@
 
 ## Abstract
 
-rocm-perf-lab is a structured performance analysis and guarded optimization framework for HIP applications targeting **gfx942-class GPUs (MI300X / MI325)**.
+rocm-perf-lab is a structured performance analysis and guarded optimization framework for HIP applications targeting **gfx942-class GPUs (MI300X / MI325)**. It combines hardware-counter–driven measurement, architecture-aware modeling, trace-derived execution analysis, and a safety-constrained optimization loop to produce *measured* performance improvements.
 
-Validated on ROCm 7.1 with rocprofv3, the system integrates:
+Unlike conventional profilers that stop at reporting metrics, rocm-perf-lab is designed to connect measurement to action — while preserving determinism, safety, and reproducibility.
 
-- Architecture-aware roofline modeling
-- Trace-derived critical-path analysis
-- ATT-based microarchitectural inspection
-- A safety-constrained, empirically validated LLM optimization loop
-
-The design emphasizes determinism, numerical correctness, and rollback-safe optimization.
+Validated on ROCm 7.1 with rocprofv3.
 
 ---
 
-## Motivation
+# 1. Why This Exists
 
-Traditional GPU profilers expose raw metrics but do not:
+Modern GPUs expose thousands of performance counters. Tools such as rocprof can collect detailed traces, instruction counts, and memory statistics. However, raw metrics alone do not answer critical engineering questions:
 
-- Quantify end-to-end critical path impact
-- Provide structured bottleneck classification
-- Offer empirically guarded optimization loops
+- Which kernel actually limits end-to-end performance?
+- Is a kernel limited by memory bandwidth, memory latency, or compute throughput?
+- If we change the kernel, will overall runtime meaningfully improve?
+- Can optimization be automated without breaking correctness or ABI contracts?
 
-rocm-perf-lab addresses these gaps by combining hardware-derived measurements with constrained program transformations.
+rocm-perf-lab exists to bridge the gap between *measurement* and *decision-making*.
 
----
+It does so by combining three principles:
 
-## Methodology
-
-### 1. Architecture-Aware Roofline Modeling
-
-Using rocprofv3 counters resolved via rocpd, the system computes:
-
-- FP32 FLOPs with CDNA3-aware VALU scaling
-- MFMA contributions
-- DRAM traffic from RDREQ / WRREQ counters
-- Operational intensity and achieved throughput
-
-Runtime is derived from kernel dispatch timestamps in the base `.rocpd_profile` database.
-
-This avoids ambiguity introduced by auxiliary trace databases.
-
-Roofline classification is first-order and feeds bottleneck analysis.
+1. Measure only from authoritative hardware traces.
+2. Interpret those traces using architecture-aware models.
+3. Apply optimizations only when empirical improvement is verified.
 
 ---
 
-### 2. Trace-Derived Critical Path Analysis
+# 2. Architecture-Aware Roofline Modeling
 
-A kernel-level execution DAG is constructed from dispatch timestamps and synchronization ordering.
+## 2.1 What Is a Roofline Model?
 
-The longest-path algorithm produces:
+The roofline model is a first-order performance model that relates:
 
-- `critical_path_ns`
+- **Arithmetic intensity** (FLOPs per byte moved)
+- **Achieved compute throughput**
+- **Achieved memory bandwidth**
+
+It answers a fundamental question:
+
+> Is this kernel limited by memory movement or by arithmetic throughput?
+
+On GPUs, this distinction is crucial. Memory-bound kernels benefit from improving locality or reducing traffic. Compute-bound kernels benefit from increasing instruction-level efficiency.
+
+## 2.2 Why Architecture Awareness Matters
+
+Naively counting instructions leads to incorrect conclusions. On CDNA3 (gfx942), each VALU instruction operates on multiple FP32 lanes. rocm-perf-lab scales instruction counts using architecture-specific vector width (`fp32_valu_width = 8`) and incorporates MFMA contributions.
+
+Similarly, DRAM traffic is derived from RDREQ/WRREQ counters with correct 32B/64B scaling rather than relying on aggregated byte counters.
+
+Runtime is computed from dispatch timestamps in the base `.rocpd_profile` database:
+
+```
+SUM(dispatch_end - dispatch_start)
+```
+
+This ensures that all roofline calculations are grounded in measured hardware execution.
+
+The result is a numerically consistent placement of kernels in memory-bound or compute-bound regimes.
+
+---
+
+# 3. Trace-Derived Critical Path Analysis
+
+Optimizing the wrong kernel does not improve overall application runtime.
+
+GPU applications frequently launch many kernels across streams. Even if a kernel is slow in isolation, it may not lie on the **critical path** — the chain of dependent execution that determines total runtime.
+
+rocm-perf-lab constructs a kernel-level execution graph from dispatch timestamps and synchronization ordering. A longest-path algorithm determines:
+
+- Total critical path duration
 - Per-kernel slack
-- Optimization priority weights
+- Optimization priority weighting
 
-The graph reflects measured execution behavior rather than static dependency inference.
+This approach is trace-derived, not theoretical. It reflects how the application actually executed on hardware.
+
+The practical consequence:
+
+> Optimization effort is focused where it changes wall-clock time.
 
 ---
 
-### 3. ATT-Based Microarchitectural Analysis
+# 4. Microarchitectural Insight via ATT
+
+Roofline classification tells us *what* kind of bottleneck exists. ATT (AMD Trace Tool) helps explain *why*.
 
 A separate ATT profiling pass extracts:
 
 - Wave occupancy
 - Stall reason breakdown
 - Issue utilization
-- Memory latency signals
+- Latency signals
 
-These features enrich bottleneck classification but do not define runtime.
+These features enable deeper diagnosis:
 
----
+- High memory bandwidth but low occupancy → latency bound.
+- High divergence → control-flow inefficiency.
+- Low VALU utilization → under-occupied or instruction-bound.
 
-### 4. Deterministic Bottleneck Classification
-
-A rule-based classifier combines:
-
-- Roofline regime
-- Achieved bandwidth vs peak
-- Occupancy metrics
-- Stall fractions
-- Divergence indicators
-
-The classifier produces deterministic labels (e.g., memory-bound, latency-bound).
+ATT enriches analysis but does not define runtime. The base profile remains authoritative.
 
 ---
 
-### 5. Guarded Closed-Loop Optimization
+# 5. Deterministic Bottleneck Classification
 
-The optimization loop operates under strict constraints:
+Rather than presenting raw metrics, rocm-perf-lab produces a structured, rule-based bottleneck label per kernel.
 
-- No ABI changes
-- Kernel signature invariance enforced
-- Standalone `.cu` kernel scope (v1)
+Examples:
+
+- Memory-bandwidth bound
+- Latency bound
+- Under-occupied
+- Divergence limited
+- Compute throughput limited
+
+The classifier is deterministic. Given identical inputs, it produces identical outputs. This avoids ambiguity and makes optimization decisions reproducible.
+
+---
+
+# 6. Guarded Closed-Loop Optimization
+
+## 6.1 The Problem With Naive Automation
+
+Automatically rewriting GPU kernels is risky. Unconstrained transformations can:
+
+- Break ABI contracts
+- Change kernel signatures
+- Introduce race conditions
+- Reduce occupancy
+- Degrade performance
+
+rocm-perf-lab enforces strict guardrails.
+
+## 6.2 Scope and Constraints (v1)
+
+- Standalone HIP kernel source files (`.cu`)
+- No ABI or signature changes
+- No global state injection
 - Limited to safe loop unrolling (factor 2–8)
 - No transformations across synchronization or atomic regions
 
-Each iteration:
+## 6.3 Empirical Acceptance
+
+Each optimization iteration:
 
 1. Profiles baseline (authoritative `.rocpd_profile`)
 2. Generates a transformation proposal
-3. Enforces static guards
+3. Enforces static guards (AST + signature invariance)
 4. Compiles via `hipcc`
 5. Performs bounded repair if needed (max 2 attempts)
 6. Re-profiles
-7. Accepts only if measured performance improves
+7. Accepts only if measured runtime improves
 
 Regression is automatically reverted.
 
-Optimization is empirical, not speculative.
+The optimizer is therefore *empirical*. Improvements are not assumed — they are measured.
 
 ---
 
-## Safety and Determinism
+# 7. Determinism and Safety Guarantees
 
-The system guarantees:
+The framework guarantees:
 
 - Deterministic runtime accounting
-- No uncontrolled state mutation
 - No binary patching
+- No uncontrolled state mutation
 - Bounded repair loops
 - Automatic rollback on regression
 
-All improvements are validated against measured hardware execution.
+The goal is not maximal automation, but safe, reproducible performance improvement.
 
 ---
 
-## Validation
+# 8. Validation Context
 
 Validated on:
 
@@ -136,12 +183,12 @@ Validated on:
 - ROCm 7.1
 - rocprofv3
 
-Closed-loop optimization has been exercised end-to-end on real hardware with regression detection enabled.
+Closed-loop optimization has been exercised end-to-end on hardware with regression detection enabled.
 
 ---
 
-## Conclusion
+# 9. Conclusion
 
-rocm-perf-lab integrates architecture-aware GPU performance modeling with a strictly guarded, empirically validated optimization loop.
+rocm-perf-lab connects low-level hardware measurement to high-level optimization decisions. By combining architecture-aware modeling, trace-derived execution analysis, and strictly guarded program transformation, it enables performance improvements that are both measurable and safe.
 
-The framework prioritizes numerical correctness, determinism, and safety over unconstrained automation, making it suitable for performance-sensitive HIP workloads on gfx942-class GPUs.
+The framework is designed for engineers who require numerical correctness, reproducibility, and disciplined optimization rather than heuristic or speculative automation.
