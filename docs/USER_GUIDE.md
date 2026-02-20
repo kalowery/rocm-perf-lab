@@ -40,7 +40,111 @@ Runtime and critical path are derived from dispatch timestamps in the base profi
 
 ---
 
-# 2. Roofline Analysis
+# 2. Worked Example: Profiling the Softmax Testbed
+
+The repository includes small test workloads (e.g., a scaled softmax kernel) designed to exercise the profiling and optimization pipeline.
+
+Assume you have built the softmax testbed binary:
+
+```bash
+hipcc softmax_testbed.cpp -O3 -o softmax_testbed
+```
+
+### Step 1 — Run Profiling
+
+```bash
+rocm-perf-lab profile ./softmax_testbed
+```
+
+Profiling flow:
+
+```
+softmax_testbed
+      │
+      ▼
+rocprofv3 (base pass)
+      │
+      ▼
+.rocpd_profile (authoritative trace DB)
+      │
+      ├──► Runtime accounting (dispatch timestamps)
+      │
+      ├──► Roofline analysis (FLOPs + DRAM bytes)
+      │
+      └──► Trace-derived DAG (critical path)
+
+(optional)
+      │
+      ▼
+ATT pass ──► Stall + occupancy feature extraction
+```
+
+Internally, the following happens:
+
+1. rocprofv3 runs and generates a `.rocpd_profile` database.
+2. Kernel dispatch timestamps are extracted.
+3. Hardware counters are resolved via `rocpd_info_pmc`.
+4. FLOPs and DRAM bytes are computed.
+5. Roofline placement is determined.
+6. A trace-derived DAG is constructed.
+7. (Optional) ATT pass enriches stall and occupancy metrics.
+
+### Step 2 — Inspect Output
+
+Example snippet from `analysis.json`:
+
+```json
+{
+  "kernel": "softmax_kernel",
+  "time_ms": 113.19,
+  "operational_intensity": 0.18,
+  "roofline_position": "memory_bound",
+  "critical_path_score": 0.94,
+  "bottleneck": "latency_bound"
+}
+```
+
+Interpretation:
+
+- The kernel lies on the critical path (score ≈ 1.0).
+- Operational intensity is low.
+- Classified as memory/latency bound.
+
+This suggests that increasing arithmetic throughput alone will not help. Improving memory behavior or hiding latency is more promising.
+
+---
+
+# 3. Running Closed-Loop Optimization
+
+```bash
+rocm-perf-lab optimize ./softmax_testbed
+```
+
+Optimization cycle:
+
+1. Baseline is profiled (authoritative `.rocpd_profile`).
+2. Kernel is ranked by critical-path contribution.
+3. A loop-unrolling proposal is generated.
+4. Static guards verify signature invariance.
+5. `hipcc` rebuilds the binary.
+6. Re-profiling measures actual runtime.
+7. If runtime improves → change accepted.
+   If not → rollback.
+
+Example improvement log (illustrative):
+
+```
+Baseline runtime: 113.19 ms
+Iteration 1 runtime: 18.02 ms
+Improvement: 84%
+Accepted.
+```
+
+All improvements are measured, not assumed.
+
+---
+
+# 4. Roofline Analysis
 
 For each kernel, the system computes:
 
@@ -53,11 +157,11 @@ For each kernel, the system computes:
 
 Roofline is first-order and feeds bottleneck classification.
 
-See `ROOFLINE_DESIGN.md` for details.
+See `ROOFLINE_DESIGN.md` for implementation details.
 
 ---
 
-# 3. Critical Path View
+# 5. Critical Path View
 
 The DAG engine constructs a trace-derived execution graph from dispatch data.
 
@@ -68,45 +172,6 @@ It computes:
 - Optimization impact weighting
 
 Optimizing non-critical kernels yields limited end-to-end speedup.
-
----
-
-# 4. Bottleneck Categories
-
-The classifier combines roofline + ATT-derived features.
-
-Possible labels:
-
-- Memory-bandwidth bound
-- Latency bound
-- Under-occupied
-- Divergence limited
-- Compute throughput limited
-
-Classification is rule-based and deterministic.
-
----
-
-# 5. Closed-Loop Optimization
-
-```bash
-rocm-perf-lab optimize ./app
-```
-
-## What It Does
-
-1. Profile baseline (authoritative `.rocpd_profile`)
-2. Rank kernels by critical-path impact
-3. Generate guarded HIP transformation proposals
-4. Enforce kernel signature invariants
-5. Compile via `hipcc`
-6. Re-profile
-7. Accept only if measured performance improves
-
-If compilation fails:
-
-- A bounded repair loop (max 2 attempts) is attempted
-- If still invalid → candidate is discarded
 
 ---
 
@@ -148,28 +213,7 @@ Only empirically validated improvements are retained.
 
 ---
 
-# 8. JSON Output Structure (Example)
-
-Example `analysis.json` entry:
-
-```json
-{
-  "kernel": "example_kernel",
-  "time_ms": 2.41,
-  "flops": 1048576,
-  "bandwidth_gbps": 820.3,
-  "operational_intensity": 0.125,
-  "roofline_position": "memory_bound",
-  "critical_path_score": 0.87,
-  "bottleneck": "latency_bound"
-}
-```
-
-Values are hardware-dependent.
-
----
-
-For implementation details, see:
+For deeper technical details, see:
 
 - `ARCHITECTURE.md`
 - `DEVELOPER_GUIDE.md`
