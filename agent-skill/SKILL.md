@@ -1,9 +1,9 @@
 ---
 name: rocm-perf-lab
-description: Multi-kernel GPU performance analysis and closed-loop optimization framework for ROCm 7.x using rocprofv3, rocpd, roofline modeling, ATT deep analysis, and dominance-aware LLM optimization.
+description: Deterministic multi-kernel GPU performance analysis and guarded closed-loop optimization framework for ROCm 7.x using rocprofv3, rocpd, roofline modeling, ATT analysis, and critical-path–weighted kernel optimization.
 ---
 
-# ROCm Perf Lab Skill (v2 — Multi-Kernel Aware)
+# ROCm Perf Lab Skill
 
 Use this skill when performing structured GPU performance engineering on ROCm-based AMD GPUs.
 
@@ -11,7 +11,7 @@ Assumptions:
 - ROCm 7.x
 - rocprofv3 available
 - rocpd SQLite dispatch database available
-- HIP/CUDA-like GPU kernels
+- HIP kernels (standalone `.cu` sources for optimization)
 - Applications may contain multiple kernels per execution
 
 ---
@@ -20,100 +20,115 @@ Assumptions:
 
 ## 1. Deterministic GPU Runtime Modeling
 
-- GPU runtime derived from rocpd kernel dispatch timestamps
-- NOT host wall-clock time
-- Supports multi-launch workloads
-- Supports multi-kernel applications
+- Runtime derived from rocpd kernel dispatch timestamps
+- Computed as SUM(dispatch_end - dispatch_start)
+- Not based on host wall-clock time
+- Works for multi-launch and multi-kernel workloads
+
+The `.rocpd_profile` database is the authoritative timing source.
 
 ---
 
 ## 2. Multi-Kernel Critical Path Analysis
 
-- Reconstructs dispatch DAG from rocpd
-- Identifies dominant kernel symbol
+- Reconstructs dispatch DAG from rocpd trace data
+- Supports cross-stream execution
 - Computes:
-  - critical_path_ns
-  - dominant_symbol
-  - fraction (dominance fraction)
+  - `critical_path_ns`
+  - Per-kernel slack
+  - Critical-path contribution weighting
 
-Dominance fraction:
-
-    fraction = time(dominant_kernel) / total_critical_path_time
-
-Whole-application speedup ceiling:
-
-    1 / (1 - fraction)
+Optimization prioritization is based on measured critical-path impact, not isolated kernel time.
 
 ---
 
-## 3. Roofline Modeling
+## 3. Architecture-Aware Roofline Modeling
 
-Extracts:
-- FLOPs
-- Bytes
+Extracts and computes:
+
+- FP32 FLOPs (CDNA3-aware VALU width scaling)
+- MFMA contributions (if present)
+- DRAM bytes using RDREQ / WRREQ counters
 - Arithmetic intensity
-- Achieved GFLOPs
+- Achieved GFLOP/s
 - Achieved GB/s
-- Bound classification (memory vs compute)
+- First-order bound classification (memory vs compute)
 
-Supports gfx942 (MI300X / MI325) counter model.
+Validated on gfx942-class GPUs (MI300X / MI325).
 
 ---
 
 ## 4. ATT Deep Analysis
 
-Extracts:
-- Instruction mix (VALU, SALU, VMEM, LDS, MFMA, etc.)
-- Stall fraction
-- Idle fraction
-- IPC
-- Average memory latency
+Optional ATT pass provides:
 
-Gracefully degrades if ATT parsing fails.
+- Wave occupancy
+- Stall breakdown
+- Instruction mix signals
+- Latency indicators
 
----
-
-## 5. Headroom-Based Optimization (HBO)
-
-Headroom fraction estimates microarchitectural inefficiency.
-
-High headroom → latency-bound or pipeline inefficiency.
-Low headroom → likely algorithmic bound.
+ATT enriches feature extraction but does not define runtime.
 
 ---
 
-## 6. Closed-Loop LLM Optimization
+## 5. Rule-Based Bottleneck Classification
+
+Combines roofline position and ATT-derived features to produce deterministic labels such as:
+
+- Memory-bandwidth bound
+- Latency bound
+- Under-occupied
+- Divergence limited
+- Compute throughput limited
+
+Classification is deterministic for identical inputs.
+
+---
+
+## 6. Guarded Closed-Loop LLM Optimization
 
 Command:
 
-    rocm-perf llm-optimize <source.cu> "<binary>" --auto-approve
+    rocm-perf-lab optimize <binary>
 
-Features:
-- Strict fenced C++ patch contract
-- Kernel signature preservation
-- Dominant-kernel targeting
-- Dominance-shift detection
-- Iterative refinement
-- Whole-application regression gating
-- Architectural regression detection
+Scope (v1):
+- Standalone HIP kernel source files (`.cu`)
+- No ABI changes
+- Kernel signature must remain identical
+- Transformation limited to safe loop unrolling (factor 2–8)
+
+Loop behavior:
+
+1. Profile baseline (`.rocpd_profile` authoritative)
+2. Rank kernels by critical-path contribution
+3. Generate loop-unrolling proposal
+4. Enforce signature invariance and basic structural checks
+5. Compile via `hipcc`
+6. Re-profile
+7. Accept only if measured runtime improves
+8. Automatically revert on regression
+
+Compilation acts as the primary structural validator.
 
 ---
 
-## 7. Dominance-Aware Multi-Kernel Optimization
+# What This Skill Does Not Do
 
-If:
+- No AST-based structural verification
+- No cross-file refactoring
+- No automatic ABI changes
+- No formal numerical equivalence proofs
+- No speculative optimization without measurement
 
-    critical_path.fraction < 0.7
-
-Then:
-- Whole-app ceiling limited
-- Expect dominance shifts
-- Iteratively optimize top kernels
-
-Dominance shifts automatically retarget optimization.
+All improvements are empirical and hardware-validated.
 
 ---
 
 # CLI Overview
 
-See references/cli.md
+Primary commands:
+
+    rocm-perf-lab profile <binary>
+    rocm-perf-lab optimize <binary>
+
+See references/cli.md for additional details.
