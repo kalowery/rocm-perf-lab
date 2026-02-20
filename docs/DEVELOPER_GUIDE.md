@@ -158,8 +158,10 @@ Architectural constraints:
 
 ## 6.3 Static Guards
 
-- AST parsing
-- Kernel signature invariance enforcement
+- Kernel signature invariance enforcement (interface-level checks)
+- Basic structural sanity checks
+
+Note: Full AST-based structural validation is not currently implemented. Compilation acts as the primary structural validator.
 
 ## 6.4 Dynamic Guards
 

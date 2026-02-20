@@ -148,7 +148,7 @@ Each optimization iteration:
 
 1. Profiles baseline (authoritative `.rocpd_profile`)
 2. Generates a transformation proposal
-3. Enforces static guards (AST + signature invariance)
+3. Enforces static guards (signature invariance and basic structural checks; full AST validation is not currently implemented)
 4. Compiles via `hipcc`
 5. Performs bounded repair if needed (max 2 attempts)
 6. Re-profiles

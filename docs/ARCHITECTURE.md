@@ -151,8 +151,8 @@ Guardrails:
 
 ## 5.3 Static Guards
 
-- Kernel signature invariance enforcement
-- AST-level validation
+- Kernel signature invariance enforcement (textual/interface-level)
+- Basic structural sanity checks (no claimed AST parsing)
 
 ## 5.4 Dynamic Guards
 
