@@ -1,129 +1,176 @@
-# USER GUIDE
+# USER GUIDE — rocm-perf-lab
 
-## Overview
+rocm-perf-lab is a profiling and guarded optimization framework for HIP workloads targeting **gfx942-class GPUs (MI300X / MI325)**.
 
-rocm-perf-lab is a profiling and closed-loop optimization framework for HIP workloads on AMD MI300X (gfx942).
+Validated on:
 
-It combines roofline modeling, DAG-based critical path analysis, ATT deep inspection, and an LLM-driven guarded optimizer.
+- AMD Instinct MI300X (gfx942)
+- AMD Instinct MI325 (gfx942)
+- ROCm 7.1
+- rocprofv3
+
+It combines architecture-aware roofline modeling, trace-derived critical path analysis, ATT deep inspection, and a safety-constrained closed-loop optimizer.
 
 ---
 
-## Profiling Workflow
+# 1. Profiling Workflow
 
-### Step 1: Baseline Profiling
+## Baseline Profiling
 
 ```bash
 rocm-perf-lab profile ./app
 ```
 
 This performs:
-- rocprofv3 counter collection (gfx942)
-- Kernel timing capture
-- ATT trace collection (optional)
 
-Outputs:
+- Base rocprofv3 profiling (authoritative `.rocpd_profile`)
+- Hardware counter collection
+- Roofline computation
+- Critical path extraction
+- Optional ATT deep analysis pass
+
+Outputs include:
+
 - `profile.json`
 - `roofline.json`
 - `dag.json`
 - `analysis.json`
 
+Runtime and critical path are derived from dispatch timestamps in the base profile.
+
 ---
 
-## Roofline Analysis
+# 2. Roofline Analysis
 
-For each kernel:
+For each kernel, the system computes:
 
-- Achieved FLOP/s
+- FP32 FLOPs (CDNA3-aware scaling)
+- DRAM bytes (RDREQ / WRREQ based)
 - Operational intensity
-- Memory bandwidth
-- Distance to compute roof
+- Achieved GFLOP/s
+- Achieved bandwidth
+- Memory vs compute bound regime
 
-Helps answer:
-- Is the kernel memory-bound?
-- Is compute throughput saturated?
+Roofline is first-order and feeds bottleneck classification.
 
----
-
-## Critical Path View
-
-The DAG engine:
-- Constructs kernel dependency graph
-- Computes longest path
-- Assigns impact score
-
-Optimizing non-critical kernels yields minimal speedup.
+See `ROOFLINE_DESIGN.md` for details.
 
 ---
 
-## Bottleneck Categories
+# 3. Critical Path View
 
-The classifier uses roofline + ATT features:
+The DAG engine constructs a trace-derived execution graph from dispatch data.
 
-| Category | Symptoms |
-|----------|----------|
-| Memory-bound | High bandwidth, low intensity |
-| Latency-bound | High stalls, low occupancy |
-| Under-occupied | Low wave occupancy |
-| Divergence-limited | High branch inefficiency |
-| Compute-bound | Near compute roof |
+It computes:
+
+- `critical_path_ns`
+- Per-kernel slack
+- Optimization impact weighting
+
+Optimizing non-critical kernels yields limited end-to-end speedup.
 
 ---
 
-## Closed-Loop Optimization
+# 4. Bottleneck Categories
+
+The classifier combines roofline + ATT-derived features.
+
+Possible labels:
+
+- Memory-bandwidth bound
+- Latency bound
+- Under-occupied
+- Divergence limited
+- Compute throughput limited
+
+Classification is rule-based and deterministic.
+
+---
+
+# 5. Closed-Loop Optimization
 
 ```bash
 rocm-perf-lab optimize ./app
 ```
 
-Process:
-1. Profile
-2. Rank critical kernels
-3. Generate HIP rewrite candidates
-4. Enforce signature invariants
-5. Rebuild
-6. Re-measure
-7. Accept only if improved
+## What It Does
+
+1. Profile baseline (authoritative `.rocpd_profile`)
+2. Rank kernels by critical-path impact
+3. Generate guarded HIP transformation proposals
+4. Enforce kernel signature invariants
+5. Compile via `hipcc`
+6. Re-profile
+7. Accept only if measured performance improves
 
 If compilation fails:
-- Compiler-repair loop attempts correction
-- If still invalid → discard candidate
+
+- A bounded repair loop (max 2 attempts) is attempted
+- If still invalid → candidate is discarded
 
 ---
 
-## Safety Guarantees
+# 6. Optimizer Scope (v1)
 
+The optimizer is intentionally constrained.
+
+Scope:
+
+- Standalone HIP kernel source files (`.cu`)
 - No ABI changes
+- No whole-application refactoring
+
+Allowed transformation (v1):
+
+- Safe loop unrolling (factor 2–8)
+
+Guardrails:
+
+- No unrolling across `__syncthreads`
+- No unrolling across atomics
+- No unrolling across dynamic shared memory usage
+- Wave64-aware
+- Avoid excessive VGPR pressure
+
+This ensures safety and determinism.
+
+---
+
+# 7. Safety Model
+
+- No binary patching
+- No unsafe pointer rewriting
+- Kernel signatures preserved
 - Deterministic rebuild required
-- Performance regression auto-reverted
-- Optional numerical validation
+- Performance regression automatically reverted
+
+Only empirically validated improvements are retained.
 
 ---
 
-## MI300X Notes
+# 8. JSON Output Structure (Example)
 
-- Designed for gfx942 counters
-- Uses rocprofv3 metric mapping
-- Roofline ceilings derived from MI300X specs
-
----
-
-## JSON Output Structure
-
-`analysis.json` includes:
+Example `analysis.json` entry:
 
 ```json
 {
-  "kernel": "name",
-  "time_ms": 1.23,
-  "flops": 1.2e12,
-  "bandwidth_gbps": 3500,
-  "operational_intensity": 12.4,
+  "kernel": "example_kernel",
+  "time_ms": 2.41,
+  "flops": 1048576,
+  "bandwidth_gbps": 820.3,
+  "operational_intensity": 0.125,
   "roofline_position": "memory_bound",
   "critical_path_score": 0.87,
   "bottleneck": "latency_bound"
 }
 ```
 
+Values are hardware-dependent.
+
 ---
 
-For deeper details, see ARCHITECTURE.md.
+For implementation details, see:
+
+- `ARCHITECTURE.md`
+- `DEVELOPER_GUIDE.md`
+- `ROOFLINE_DESIGN.md`

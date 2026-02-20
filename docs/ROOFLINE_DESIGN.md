@@ -1,98 +1,133 @@
-# Roofline Design Notes — rocm-perf-lab
+# Roofline Design — rocm-perf-lab
 
-This document explains how roofline analysis is implemented.
+This document describes the **current** roofline implementation as validated on gfx942-class GPUs (MI300X / MI325) using ROCm 7.1 and rocprofv3.
 
----
-
-# 1. Goals
-
-Provide a minimal, stable roofline model that:
-
-- Uses rocprof hardware counters
-- Computes FP32 FLOPs
-- Computes DRAM bytes
-- Classifies memory vs compute bound
-- Never breaks profiling if counters unavailable
+The design goal is numerical correctness on CDNA3 while remaining robust to counter failures.
 
 ---
 
-# 2. Metrics Used
+# 1. Design Goals
 
-Requested metrics:
+The roofline layer must:
 
-- SQ_INSTS_VALU
-- TCC_READ_BYTES
-- TCC_WRITE_BYTES
-
-FLOPs estimate:
-
-```
-FLOPs ≈ 2 × SQ_INSTS_VALU
-```
-
-Assumes FMA = 2 FLOPs.
-
-Bytes:
-
-```
-bytes = TCC_READ_BYTES + TCC_WRITE_BYTES
-```
+- Use rocprofv3 hardware counters
+- Produce architecture-aware FP32 FLOP estimates
+- Compute DRAM traffic correctly on gfx942
+- Classify memory vs compute bound regimes
+- Fail gracefully if counters are unavailable
 
 ---
 
-# 3. Arithmetic Intensity
+# 2. Counter Mapping (rocprofv3 / rocpd)
+
+Metrics are resolved via the `rocpd_info_pmc` table (name → pmc_id mapping).
+
+We explicitly avoid relying on ATT databases for roofline computation.
+
+Required counters (gfx942):
+
+- `SQ_INSTS_VALU`
+- `MFMA_MOPS_F32` (if present)
+- TCC read/write request counters (RDREQ / WRREQ variants)
+
+---
+
+# 3. FP32 FLOP Estimation (CDNA3-aware)
+
+FLOPs are computed as:
+
+```
+FLOPs =
+    SQ_INSTS_VALU * fp32_valu_width
+  + MFMA_MOPS_F32 * 512
+```
+
+Where:
+
+- `fp32_valu_width = 8` for CDNA3 (gfx942)
+- MFMA contribution reflects matrix op throughput scaling
+
+This corrects earlier scalar assumptions (e.g., 2 × VALU) and prevents systematic undercounting.
+
+Limitations:
+- FP32-focused model
+- Does not currently model FP16/FP64 separately
+
+---
+
+# 4. DRAM Byte Accounting (gfx942)
+
+We do **not** rely on `TCC_READ_BYTES` / `TCC_WRITE_BYTES` directly.
+
+Instead we compute traffic from:
+
+- RDREQ / WRREQ counters
+- 32B vs 64B request variants
+
+Total bytes:
+
+```
+bytes = (rdreq_32B * 32 + rdreq_64B * 64)
+      + (wrreq_32B * 32 + wrreq_64B * 64)
+```
+
+This avoids incorrect aggregation and reflects actual memory traffic on CDNA3.
+
+---
+
+# 5. Arithmetic Intensity
 
 ```
 AI = FLOPs / bytes
 ```
 
-If bytes = 0 → AI = 0.
+If `bytes == 0`, AI is defined as 0 to avoid division errors.
 
 ---
 
-# 4. Achieved Metrics
+# 6. Achieved Performance Metrics
+
+Runtime is computed from rocpd kernel dispatch timestamps:
 
 ```
-achieved_gflops = FLOPs / runtime
-achieved_bandwidth = bytes / runtime
+runtime = SUM(dispatch_end - dispatch_start)
+```
+
+Derived metrics:
+
+```
+achieved_gflops     = FLOPs / runtime
+achieved_bandwidth  = bytes / runtime
 ```
 
 ---
 
-# 5. Bound Classification
+# 7. Bound Classification
 
 Let:
 
-- peak_compute = theoretical_peak_flops
-- peak_bandwidth = peak_bandwidth_gbps
+- `peak_compute`
+- `peak_bandwidth`
 
 If:
 
 ```
-peak_bandwidth × AI < peak_compute
+peak_bandwidth * AI < peak_compute
 ```
 
-Then:
+Then kernel is classified as memory-bound; otherwise compute-bound.
 
-```
-bound = "memory"
-```
-
-Else:
-
-```
-bound = "compute"
-```
+This classification is first-order and feeds the bottleneck classifier.
 
 ---
 
-# 6. Failure Handling
+# 8. Failure Semantics
 
 If:
 
-- Metrics unavailable
-- Counter parsing fails
-- rocprof errors
+- Required counters are missing
+- rocpd parsing fails
+- rocprof execution fails
 
 Then:
 
@@ -104,24 +139,17 @@ Profiling must still succeed.
 
 ---
 
-# 7. Limitations
+# 9. Validation Context
 
-- FP32-only estimation
-- Assumes VALU maps to FP32 arithmetic
-- Does not distinguish FP16/FP64
-- Does not model cache-level traffic
+Validated on:
 
----
+- AMD Instinct MI300X (gfx942)
+- AMD Instinct MI325 (gfx942)
+- ROCm 7.1
+- rocprofv3
 
-# 8. Future Extensions
-
-Possible improvements:
-
-- Separate FP16/FP32 counters
-- Add L2 bandwidth modeling
-- Integrate roofline plotting
-- Add counter auto-detection
+Numerical consistency verified against hardware measurements.
 
 ---
 
-Roofline integration is intentionally minimal and robust.
+Roofline integration is architecture-aware for CDNA3 and designed to be extensible to future AMD GPUs via parameterized width and ceiling definitions.

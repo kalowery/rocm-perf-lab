@@ -1,96 +1,216 @@
-# ARCHITECTURE
+# ARCHITECTURE — rocm-perf-lab
 
-## High-Level Flow
+This document describes the current system architecture as validated on gfx942-class GPUs (MI300X / MI325) using ROCm 7.1.
+
+The system is structured as a deterministic profiling → analysis → guarded optimization pipeline.
+
+---
+
+# High-Level Flow
 
 ```
-Application → Profiling → Roofline → DAG → ATT → Classification → Optimization Loop
+Application
+   ↓
+Base Profiling (rocprofv3 → .rocpd_profile)
+   ↓
+Roofline Analysis
+   ↓
+Trace-Derived Critical Path (DAG)
+   ↓
+ATT Deep Analysis (separate pass)
+   ↓
+Bottleneck Classification
+   ↓
+Guarded Closed-Loop Optimization
 ```
 
 ---
 
-## 1. Profiling Layer
+# 1. Profiling Layer
 
-Uses rocprofv3 for gfx942 hardware counters.
+## 1.1 Base Profile (Authoritative Timing Source)
 
-Data captured:
-- Kernel durations
-- FLOP counts
-- Memory transactions
-- Occupancy
+The base profiling pass produces a persistent `.rocpd_profile` database.
 
-Normalized into internal metric representation.
+This database is the **only source of truth** for:
+
+- Kernel dispatch timestamps
+- Runtime accounting
+- Critical path computation
+- Roofline metrics
+
+We explicitly avoid using ATT databases for critical-path or runtime computation.
+
+Runtime is computed as:
+
+```
+SUM(dispatch_end - dispatch_start)
+```
+
+This ensures deterministic, trace-derived measurement.
+
+## 1.2 ATT Profile (Extended Analysis)
+
+ATT is executed in a separate profiling pass.
+
+ATT-derived JSON provides:
+
+- Wave state breakdown
+- Stall reasons
+- IPC estimates
+- Occupancy information
+
+ATT is used for feature enrichment only — never as the authoritative runtime source.
 
 ---
 
-## 2. Roofline Layer
+# 2. Roofline Layer
 
-Computes:
+See `ROOFLINE_DESIGN.md` for implementation details.
 
-Performance = FLOPs / time
-Operational Intensity = FLOPs / bytes
+Key properties:
 
-Compared against:
-- Peak FP throughput (MI300X)
-- Peak HBM bandwidth
+- Architecture-aware FP32 FLOP scaling (CDNA3 VALU width = 8)
+- MFMA integration
+- Correct RDREQ / WRREQ byte accounting
+- rocpd metric name → pmc_id mapping
+- Deterministic runtime from dispatch timestamps
 
-Determines performance regime.
+The roofline layer produces:
+
+- FLOPs
+- Bytes
+- Operational intensity
+- Achieved performance
+- First-order bound classification
 
 ---
 
-## 3. DAG Engine
+# 3. Trace-Derived DAG Engine
 
-Graph constructed from:
-- HIP stream dependencies
+The DAG engine constructs a kernel execution graph from trace data.
+
+Nodes:
+- Kernel dispatches
+
+Edges:
+- Stream ordering
 - Synchronization events
+- Implicit ordering derived from timestamps
 
-Critical path computed via longest path algorithm.
+Critical path is computed using a longest-path algorithm over dispatch intervals.
 
-Outputs per-kernel impact weight.
+The result is:
 
----
+- `critical_path_ns`
+- Per-kernel slack
+- Criticality weight for optimization prioritization
 
-## 4. ATT Deep Layer
-
-Parses ATT traces to extract:
-- Stall cycles
-- Issue slot utilization
-- Wave occupancy
-
-Feeds bottleneck classifier.
+This is a trace-derived execution DAG, not a purely logical dependency graph.
 
 ---
 
-## 5. Optimization Engine
+# 4. Bottleneck Classification
 
-Two-layer guard system:
+Features combine:
 
-### Static Guards
-- Signature invariance
-- AST verification
+- Roofline position
+- Achieved bandwidth vs peak
+- Occupancy
+- Stall breakdown
+- Divergence indicators
 
-### Dynamic Guards
-- Successful compilation
-- Performance improvement
-- Optional numeric validation
+Classifier is rule-based and deterministic.
+
+Output:
+- Single bottleneck label per kernel
 
 ---
 
-## 6. Closed-Loop Control
+# 5. Guarded HIP Optimizer (v1 Scope)
 
-Optimization loop continues until:
-- No further improvement
+The optimizer operates under explicit constraints.
+
+## 5.1 Scope
+
+- Standalone HIP kernel source files (`.cu`)
+- No whole-application refactoring
+- No ABI or signature changes
+
+## 5.2 Allowed Transformations (v1)
+
+- Safe loop unrolling (factor 2–8)
+
+Guardrails:
+
+- No unrolling across `__syncthreads`
+- No unrolling across atomics
+- No unrolling across dynamic shared memory usage
+- Respect wave64 execution model
+- Avoid occupancy regressions (VGPR pressure awareness)
+
+## 5.3 Static Guards
+
+- Kernel signature invariance enforcement
+- AST-level validation
+
+## 5.4 Dynamic Guards
+
+- Successful compilation via `hipcc`
+- Deterministic rebuild
+- Re-profile and re-measure
+- Accept only if performance improves beyond threshold
+- Automatic rollback on regression
+
+---
+
+# 6. Closed-Loop Control
+
+Each optimization iteration:
+
+1. Profile baseline (authoritative `.rocpd_profile`)
+2. Select critical-path-weighted kernel
+3. Generate transformation proposal (LLM)
+4. Enforce signature invariants
+5. Compile
+6. If compilation fails → bounded repair loop (max 2 attempts)
+7. Re-profile
+8. Accept if improvement; otherwise reject
+
+Loop terminates when:
+
+- No improvement found
 - Candidate pool exhausted
 - Time budget exceeded
 
-Rollback guaranteed on regression.
+All decisions are logged in structured JSON.
 
 ---
 
-## Validation Context
+# 7. Determinism and Safety Guarantees
+
+- No binary patching
+- No pointer rewriting
+- No ABI changes
+- No uncontrolled state mutation
+- Regression automatically reverted
+- Repair loop bounded
+
+The system is empirical: only measured improvements are retained.
+
+---
+
+# 8. Validation Context
 
 Validated on:
-- AMD Instinct MI300X
-- gfx942
-- ROCm 6.x
 
-Architecture designed for extensibility to future AMD GPUs.
+- AMD Instinct MI300X (gfx942)
+- AMD Instinct MI325 (gfx942)
+- ROCm 7.1
+- rocprofv3
+
+Closed-loop optimization validated end-to-end on real hardware.
+
+---
+
+Architecture is designed to parameterize device ceilings and vector widths for future AMD GPU generations.

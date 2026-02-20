@@ -1,102 +1,147 @@
-# WHITEPAPER
+# WHITEPAPER — rocm-perf-lab
 
 ## Abstract
 
-rocm-perf-lab is a structured performance analysis and optimization framework for HIP applications targeting AMD Instinct MI300X (gfx942). It integrates hardware counter–based roofline modeling, critical-path DAG analysis, ATT-driven microarchitectural inspection, and a safety-constrained LLM optimization loop.
+rocm-perf-lab is a structured performance analysis and guarded optimization framework for HIP applications targeting **gfx942-class GPUs (MI300X / MI325)**.
+
+Validated on ROCm 7.1 with rocprofv3, the system integrates:
+
+- Architecture-aware roofline modeling
+- Trace-derived critical-path analysis
+- ATT-based microarchitectural inspection
+- A safety-constrained, empirically validated LLM optimization loop
+
+The design emphasizes determinism, numerical correctness, and rollback-safe optimization.
 
 ---
 
 ## Motivation
 
-Traditional GPU profiling tools provide raw metrics but lack:
-- End-to-end critical path prioritization
-- Structured bottleneck classification
-- Automated, safe optimization loops
+Traditional GPU profilers expose raw metrics but do not:
 
-rocm-perf-lab addresses these gaps.
+- Quantify end-to-end critical path impact
+- Provide structured bottleneck classification
+- Offer empirically guarded optimization loops
+
+rocm-perf-lab addresses these gaps by combining hardware-derived measurements with constrained program transformations.
 
 ---
 
 ## Methodology
 
-### Roofline Modeling
+### 1. Architecture-Aware Roofline Modeling
 
-Using rocprofv3 counters:
+Using rocprofv3 counters resolved via rocpd, the system computes:
 
-- Compute achieved FLOP/s
-- Derive operational intensity
-- Compare against MI300X ceilings
+- FP32 FLOPs with CDNA3-aware VALU scaling
+- MFMA contributions
+- DRAM traffic from RDREQ / WRREQ counters
+- Operational intensity and achieved throughput
 
-Enables first-order bottleneck detection.
+Runtime is derived from kernel dispatch timestamps in the base `.rocpd_profile` database.
 
----
+This avoids ambiguity introduced by auxiliary trace databases.
 
-### Critical Path Analysis
-
-Kernel-level DAG constructed.
-
-Longest-path algorithm identifies kernels whose optimization yields global speedup.
+Roofline classification is first-order and feeds bottleneck analysis.
 
 ---
 
-### ATT-Based Microarchitectural Insight
+### 2. Trace-Derived Critical Path Analysis
 
-ATT traces provide per-wave stall breakdown.
+A kernel-level execution DAG is constructed from dispatch timestamps and synchronization ordering.
 
-This enables:
-- Latency diagnosis
-- Occupancy tuning
-- Divergence analysis
+The longest-path algorithm produces:
 
----
+- `critical_path_ns`
+- Per-kernel slack
+- Optimization priority weights
 
-### Bottleneck Classification
-
-Combines roofline and ATT-derived features.
-
-Produces deterministic kernel bottleneck labels.
+The graph reflects measured execution behavior rather than static dependency inference.
 
 ---
 
-### Closed-Loop LLM Optimization
+### 3. ATT-Based Microarchitectural Analysis
 
-LLM generates HIP kernel transformations.
+A separate ATT profiling pass extracts:
 
-Safety mechanisms:
-- Signature invariants
-- Compile validation
-- Compiler-repair loop
-- Performance gate
-- Rollback guarantee
+- Wave occupancy
+- Stall reason breakdown
+- Issue utilization
+- Memory latency signals
 
-Only empirically validated improvements are retained.
+These features enrich bottleneck classification but do not define runtime.
 
 ---
 
-## Safety and Determinism
+### 4. Deterministic Bottleneck Classification
 
-The system ensures:
+A rule-based classifier combines:
+
+- Roofline regime
+- Achieved bandwidth vs peak
+- Occupancy metrics
+- Stall fractions
+- Divergence indicators
+
+The classifier produces deterministic labels (e.g., memory-bound, latency-bound).
+
+---
+
+### 5. Guarded Closed-Loop Optimization
+
+The optimization loop operates under strict constraints:
 
 - No ABI changes
-- No unsafe transformations
-- Deterministic compilation required
-- Regression auto-reverted
+- Kernel signature invariance enforced
+- Standalone `.cu` kernel scope (v1)
+- Limited to safe loop unrolling (factor 2–8)
+- No transformations across synchronization or atomic regions
+
+Each iteration:
+
+1. Profiles baseline (authoritative `.rocpd_profile`)
+2. Generates a transformation proposal
+3. Enforces static guards
+4. Compiles via `hipcc`
+5. Performs bounded repair if needed (max 2 attempts)
+6. Re-profiles
+7. Accepts only if measured performance improves
+
+Regression is automatically reverted.
 
 Optimization is empirical, not speculative.
 
 ---
 
+## Safety and Determinism
+
+The system guarantees:
+
+- Deterministic runtime accounting
+- No uncontrolled state mutation
+- No binary patching
+- Bounded repair loops
+- Automatic rollback on regression
+
+All improvements are validated against measured hardware execution.
+
+---
+
 ## Validation
 
-Evaluated on AMD Instinct MI300X (gfx942).
+Validated on:
 
-Demonstrated:
-- Accurate roofline placement
-- Reliable bottleneck classification
-- Stable guarded optimization loop
+- AMD Instinct MI300X (gfx942)
+- AMD Instinct MI325 (gfx942)
+- ROCm 7.1
+- rocprofv3
+
+Closed-loop optimization has been exercised end-to-end on real hardware with regression detection enabled.
 
 ---
 
 ## Conclusion
 
-rocm-perf-lab combines structured GPU performance modeling with guarded AI-driven optimization to provide safe, architecture-aware performance improvement on MI300X.
+rocm-perf-lab integrates architecture-aware GPU performance modeling with a strictly guarded, empirically validated optimization loop.
+
+The framework prioritizes numerical correctness, determinism, and safety over unconstrained automation, making it suitable for performance-sensitive HIP workloads on gfx942-class GPUs.
