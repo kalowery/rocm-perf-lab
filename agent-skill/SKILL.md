@@ -89,7 +89,7 @@ Classification is deterministic for identical inputs.
 
 Command:
 
-    rocm-perf-lab optimize <binary>
+    rocm-perf optimize <binary>
 
 Scope (v1):
 - Standalone HIP kernel source files (`.cu`)
@@ -128,7 +128,7 @@ All improvements are empirical and hardware-validated.
 
 Primary commands:
 
-    rocm-perf-lab profile <binary>
-    rocm-perf-lab optimize <binary>
+    rocm-perf profile <binary>
+    rocm-perf optimize <binary>
 
 See references/cli.md for additional details.

@@ -1,8 +1,8 @@
-# CLI Reference — rocm-perf-lab
+# CLI Reference — rocm-perf
 
 Executable:
 
-    rocm-perf-lab
+    rocm-perf
 
 ---
 
@@ -10,7 +10,7 @@ Executable:
 
 Profile a ROCm binary or kernel execution.
 
-    rocm-perf-lab profile <cmd>
+    rocm-perf profile <cmd>
 
 Options:
 
@@ -27,7 +27,7 @@ Options:
 
 Example:
 
-    rocm-perf-lab profile --roofline --focus-critical "./app 100"
+    rocm-perf profile --roofline --focus-critical "./app 100"
 
 ---
 
@@ -35,7 +35,7 @@ Example:
 
 Deterministic loop-unroll optimization (non-LLM).
 
-    rocm-perf-lab optimize <source.cu> "<binary>"
+    rocm-perf optimize <source.cu> "<binary>"
 
 Arguments:
 
@@ -59,7 +59,7 @@ Behavior:
 
 Generate an LLM optimization prompt from profiling data.
 
-    rocm-perf-lab prompt <source.cu> "<binary>"
+    rocm-perf prompt <source.cu> "<binary>"
 
 Options:
 
@@ -76,7 +76,7 @@ This command does not execute an LLM; it prepares the optimization context.
 
 Closed-loop LLM optimization using OpenAI.
 
-    rocm-perf-lab llm-optimize <source.cu> "<binary>"
+    rocm-perf llm-optimize <source.cu> "<binary>"
 
 Options:
 
@@ -103,7 +103,7 @@ Behavior:
 
 Adaptive regression-based parameter search.
 
-    rocm-perf-lab autotune \
+    rocm-perf autotune \
         --space <space.json> \
         --cmd-template "<command>"
 
