@@ -57,11 +57,13 @@ Produces structured JSON including:
 
 ## Quickstart (MI300X / gfx942)
 
-### 1. Build
-```bash
-cmake -S . -B build
-cmake --build build -j
-```
+### 1. Setup
+No CMake build is required.
+
+Ensure:
+- ROCm toolchain is installed and `hipcc` is available
+- `rocprofv3` is on your PATH
+- The `rocm-perf-lab` CLI is installed (e.g., `pip install -e .` from the project root)
 
 ### 2. Profile
 ```bash
