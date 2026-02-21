@@ -7,6 +7,8 @@
 #include <mutex>
 #include <cstring>
 #include <fstream>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <iostream>
 #include <regex>
 #include <memory>
@@ -39,6 +41,9 @@ static std::unordered_map<uint64_t, uint64_t> g_dispatch_counters;
 
 static std::mutex g_kernel_mutex;
 static std::mutex g_capture_mutex;
+
+static std::unordered_map<hsa_queue_t*, hsa_agent_t> g_queue_agents;
+static std::mutex g_queue_agent_mutex;
 
 // Capture configuration
 static std::string g_capture_kernel;
@@ -215,7 +220,24 @@ static hsa_status_t intercepted_vmem_address_reserve(
     uint64_t address,
     uint64_t flags)
 {
-    return real_vmem_address_reserve(va, size, address, flags);
+    hsa_status_t status = real_vmem_address_reserve(va, size, address, flags);
+
+    if (status == HSA_STATUS_SUCCESS && va && *va) {
+        DeviceRegion region{};
+        region.base = reinterpret_cast<uint64_t>(*va);
+        region.size = size;
+        region.is_pool_alloc = false;
+        region.is_vmem = true;
+        region.handle = 0;
+        region.access_mask = 0;
+
+        std::lock_guard<std::mutex> lock(g_region_mutex);
+        if (g_device_regions.size() < g_device_regions.capacity()) {
+            g_device_regions.push_back(region);
+        }
+    }
+
+    return status;
 }
 
 static hsa_status_t intercepted_vmem_address_free(
@@ -248,14 +270,47 @@ static hsa_status_t intercepted_vmem_map(
     hsa_amd_vmem_alloc_handle_t memory_handle,
     uint64_t flags)
 {
-    return real_vmem_map(va, size, in_offset, memory_handle, flags);
+    hsa_status_t status =
+        real_vmem_map(va, size, in_offset, memory_handle, flags);
+
+    if (status == HSA_STATUS_SUCCESS && va) {
+        uint64_t base = reinterpret_cast<uint64_t>(va);
+
+        std::lock_guard<std::mutex> lock(g_region_mutex);
+        for (size_t i = 0; i < g_device_regions.size(); ++i) {
+            if (g_device_regions[i].base == base &&
+                g_device_regions[i].is_vmem) {
+                g_device_regions[i].handle = memory_handle.handle;
+                g_device_regions[i].size = size;
+                break;
+            }
+        }
+    }
+
+    return status;
 }
 
 static hsa_status_t intercepted_vmem_unmap(
     void* va,
     size_t size)
 {
-    return real_vmem_unmap(va, size);
+    hsa_status_t status = real_vmem_unmap(va, size);
+
+    if (status == HSA_STATUS_SUCCESS && va) {
+        uint64_t base = reinterpret_cast<uint64_t>(va);
+
+        std::lock_guard<std::mutex> lock(g_region_mutex);
+        for (size_t i = 0; i < g_device_regions.size(); ++i) {
+            if (g_device_regions[i].base == base &&
+                g_device_regions[i].is_vmem) {
+                g_device_regions[i] = g_device_regions.back();
+                g_device_regions.pop_back();
+                break;
+            }
+        }
+    }
+
+    return status;
 }
 
 static hsa_status_t intercepted_vmem_set_access(
@@ -264,7 +319,26 @@ static hsa_status_t intercepted_vmem_set_access(
     const hsa_amd_memory_access_desc_t* desc,
     size_t desc_cnt)
 {
-    return real_vmem_set_access(va, size, desc, desc_cnt);
+    hsa_status_t status =
+        real_vmem_set_access(va, size, desc, desc_cnt);
+
+    if (status == HSA_STATUS_SUCCESS && va && desc && desc_cnt > 0) {
+        uint64_t base = reinterpret_cast<uint64_t>(va);
+
+        std::lock_guard<std::mutex> lock(g_region_mutex);
+        for (size_t i = 0; i < g_device_regions.size(); ++i) {
+            if (g_device_regions[i].base == base &&
+                g_device_regions[i].is_vmem) {
+                for (size_t j = 0; j < desc_cnt; ++j) {
+                    g_device_regions[i].access_mask |=
+                        static_cast<uint32_t>(desc[j].permissions);
+                }
+                break;
+            }
+        }
+    }
+
+    return status;
 }
 
 static hsa_status_t intercepted_reader_create_from_memory(
@@ -389,6 +463,70 @@ static hsa_status_t intercepted_symbol_get_info(
     return status;
 }
 
+static void snapshot_device_memory()
+{
+    FILE* sentinel = fopen("snapshot_called.txt", "w");
+    if (sentinel) {
+        fprintf(sentinel, "snapshot invoked\n");
+        fclose(sentinel);
+    }
+
+    std::vector<DeviceRegion> regions_copy;
+    {
+        std::lock_guard<std::mutex> lock(g_region_mutex);
+        regions_copy = g_device_regions;
+    }
+
+    mkdir("isolate_capture/memory", 0755);
+
+    FILE* meta = fopen("isolate_capture/memory_regions.json", "w");
+    if (!meta) return;
+
+    fprintf(meta, "{\n  \"regions\": [\n");
+
+    for (size_t i = 0; i < regions_copy.size(); ++i) {
+        const DeviceRegion& r = regions_copy[i];
+
+        void* host_buf = malloc(r.size);
+        if (!host_buf) continue;
+
+        hsa_status_t status =
+            hsa_memory_copy(host_buf,
+                            reinterpret_cast<void*>(r.base),
+                            r.size);
+
+        if (status == HSA_STATUS_SUCCESS) {
+            char filename[256];
+            snprintf(filename, sizeof(filename),
+                     "isolate_capture/memory/region_%lx.bin",
+                     r.base);
+
+            FILE* f = fopen(filename, "wb");
+            if (f) {
+                fwrite(host_buf, 1, r.size, f);
+                fclose(f);
+            }
+
+            fprintf(meta,
+                "    {\"base\": %lu, \"size\": %zu, "
+                "\"is_pool\": %s, \"is_vmem\": %s, "
+                "\"handle\": %lu, \"access\": %u}%s\n",
+                r.base,
+                r.size,
+                r.is_pool_alloc ? "true" : "false",
+                r.is_vmem ? "true" : "false",
+                r.handle,
+                r.access_mask,
+                (i + 1 < regions_copy.size()) ? "," : "");
+        }
+
+        free(host_buf);
+    }
+
+    fprintf(meta, "  ]\n}\n");
+    fclose(meta);
+}
+
 static void OnSubmitPackets(
     const void* in_packets,
     uint64_t count,
@@ -469,10 +607,35 @@ static void OnSubmitPackets(
             hsaco.close();
         }
 
+        hsa_queue_t* queue = reinterpret_cast<hsa_queue_t*>(data);
+
+        hsa_agent_t agent = {};
+        {
+            std::lock_guard<std::mutex> lock(g_queue_agent_mutex);
+            auto it = g_queue_agents.find(queue);
+            if (it != g_queue_agents.end())
+                agent = it->second;
+        }
+
+        char agent_name[64] = {};
+        hsa_agent_get_info(agent, HSA_AGENT_INFO_NAME, agent_name);
+
+        hsa_isa_t isa;
+        hsa_agent_get_info(agent, HSA_AGENT_INFO_ISA, &isa);
+
+        char isa_name[64] = {};
+        hsa_isa_get_info_alt(isa, HSA_ISA_INFO_NAME, isa_name);
+
+        uint32_t wavefront_size = 0;
+        hsa_agent_get_info(agent, HSA_AGENT_INFO_WAVEFRONT_SIZE, &wavefront_size);
+
         std::ofstream meta("isolate_capture/dispatch.json");
         meta << "{\n";
         meta << "  \"mangled_name\": \"" << info.mangled_name << "\",\n";
         meta << "  \"demangled_name\": \"" << info.demangled_name << "\",\n";
+        meta << "  \"agent_name\": \"" << agent_name << "\",\n";
+        meta << "  \"isa_name\": \"" << isa_name << "\",\n";
+        meta << "  \"wavefront_size\": " << wavefront_size << ",\n";
         meta << "  \"kernel_object\": " << pkt.kernel_object << ",\n";
         meta << "  \"grid\": [" << pkt.grid_size_x << ", " << pkt.grid_size_y << ", " << pkt.grid_size_z << "],\n";
         meta << "  \"block\": [" << pkt.workgroup_size_x << ", " << pkt.workgroup_size_y << ", " << pkt.workgroup_size_z << "],\n";
@@ -486,6 +649,8 @@ static void OnSubmitPackets(
         std::ofstream bin("isolate_capture/kernarg.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char*>(kernarg_copy.data()), kernarg_copy.size());
         bin.close();
+
+        snapshot_device_memory();
     }
 
     writer(in_packets, count);
@@ -514,10 +679,15 @@ static hsa_status_t intercepted_queue_create(
 
     if (status == HSA_STATUS_SUCCESS)
     {
+        {
+            std::lock_guard<std::mutex> lock(g_queue_agent_mutex);
+            g_queue_agents[*queue] = agent;
+        }
+
         g_api_table->amd_ext_->hsa_amd_queue_intercept_register_fn(
             *queue,
             OnSubmitPackets,
-            nullptr);
+            *queue);
     }
 
     return status;
