@@ -77,8 +77,16 @@ int main() {
         size_t size_end = contents.find_first_not_of("0123456789", size_start);
         size_t size = std::stoull(contents.substr(size_start, size_end - size_start));
 
+        // ---- Page-align reservation ----
+        const size_t page = 4096;
+        uint64_t aligned_base = base & ~(page - 1);
+        uint64_t end_addr = base + size;
+        uint64_t aligned_end = (end_addr + page - 1) & ~(page - 1);
+        size_t aligned_size = aligned_end - aligned_base;
+        size_t offset = base - aligned_base;
+
         void* reserved = nullptr;
-        hsa_status_t st = hsa_amd_vmem_address_reserve(&reserved, size, base, 0);
+        hsa_status_t st = hsa_amd_vmem_address_reserve(&reserved, aligned_size, aligned_base, 0);
         if (st != HSA_STATUS_SUCCESS) {
             std::cerr << "reserve failed at 0x" << std::hex << base << "\n";
             return 1;
@@ -87,7 +95,7 @@ int main() {
         hsa_amd_vmem_alloc_handle_t handle{};
         st = hsa_amd_vmem_handle_create(
                 backing_pool,
-                size,
+                aligned_size,
                 (hsa_amd_memory_type_t)0,
                 0,
                 &handle);
@@ -96,7 +104,7 @@ int main() {
             return 1;
         }
 
-        st = hsa_amd_vmem_map(reserved, size, 0, handle, 0);
+        st = hsa_amd_vmem_map(reserved, aligned_size, 0, handle, 0);
         if (st != HSA_STATUS_SUCCESS) {
             std::cerr << "vm map failed\n";
             return 1;
@@ -105,7 +113,7 @@ int main() {
         hsa_amd_memory_access_desc_t access{};
         access.agent_handle = g_gpu_agent;
         access.permissions = HSA_ACCESS_PERMISSION_RW;
-        st = hsa_amd_vmem_set_access(reserved, size, &access, 1);
+        st = hsa_amd_vmem_set_access(reserved, aligned_size, &access, 1);
         if (st != HSA_STATUS_SUCCESS) {
             std::cerr << "set access failed\n";
             return 1;
@@ -119,7 +127,10 @@ int main() {
         std::vector<char> blob((std::istreambuf_iterator<char>(blobf)),
                                 std::istreambuf_iterator<char>());
 
-        st = hsa_memory_copy(reserved, blob.data(), size);
+        void* copy_dst = static_cast<void*>(
+            static_cast<uint8_t*>(reserved) + offset);
+
+        st = hsa_memory_copy(copy_dst, blob.data(), size);
         if (st != HSA_STATUS_SUCCESS) {
             std::cerr << "memory copy failed\n";
             return 1;
