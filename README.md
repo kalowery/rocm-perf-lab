@@ -53,6 +53,27 @@ Produces structured JSON including:
 - Accepts changes only if performance improves
 - Automatic rollback on regressions
 
+### 8. Kernel Isolation & VA-Faithful Replay
+- HSA Tools API–based kernel interception (no LD_PRELOAD hacks)
+- Captures HSACO, kernarg, dispatch geometry, and full device memory snapshot
+- Reconstructs original GPU virtual address layout using AMD VM APIs
+- Deterministic cross-process kernel reproduction on CDNA-class GPUs
+- Multi-iteration replay harness with optional stateful execution
+
+Replay CLI:
+
+```bash
+rocm-perf replay reserve-check
+rocm-perf replay full-vm
+rocm-perf replay full-vm --iterations 100
+rocm-perf replay full-vm --iterations 100 --no-recopy
+```
+
+- `reserve-check` validates fixed-address VM feasibility.
+- `full-vm` performs strict VA-faithful replay.
+- `--iterations N` repeats dispatch N times without rebuilding VM state.
+- `--no-recopy` skips restoring memory between iterations (stateful mode).
+
 ---
 
 ## Quickstart (MI300X / gfx942)
@@ -78,7 +99,7 @@ Generates:
 
 ### 3. Optimize (Closed Loop)
 ```bash
-rocm-perf-lab optimize ./your_app
+rocm-perf optimize ./your_app
 ```
 
 The optimizer:
@@ -87,6 +108,30 @@ The optimizer:
 3. Generates guarded HIP rewrites
 4. Rebuilds and re-measures
 5. Accepts only validated improvements
+
+---
+
+### 4. Kernel Isolation & Replay Workflow
+
+1. Run application with isolation tool enabled (HSA Tools API).
+2. Snapshot is written to:
+   ```
+   rocm_perf_lab/isolate/tool/isolate_capture/
+   ```
+3. Validate VM feasibility:
+   ```bash
+   rocm-perf replay reserve-check
+   ```
+4. Perform deterministic replay:
+   ```bash
+   rocm-perf replay full-vm
+   ```
+5. Run as microbenchmark:
+   ```bash
+   rocm-perf replay full-vm --iterations 100
+   ```
+
+Replay reports average GPU time and total wall time.
 
 ---
 
