@@ -76,15 +76,77 @@ rocm-perf replay full-vm --iterations 100 --no-recopy
 
 ---
 
+## Build & Installation
+
+rocm-perf-lab now has two components:
+
+1. **Python CLI + analysis framework** (installed via `pip`)
+2. **Native C++ isolation & replay tools** (built via CMake)
+
+Both are required for full functionality.
+
+---
+
+### 1. System Requirements
+
+- ROCm toolchain (validated on ROCm 7.1)
+- `hipcc` available in PATH
+- `rocprofv3` available in PATH
+- CDNA-class GPU recommended for full VM-faithful replay (MI300X / MI325)
+
+---
+
+### 2. Install Python Package
+
+From the project root:
+
+```bash
+pip install -e .
+```
+
+For development (includes pytest):
+
+```bash
+pip install -e .[dev]
+```
+
+This installs the CLI command:
+
+```bash
+rocm-perf
+```
+
+---
+
+### 3. Build Native Replay Tools
+
+The replay subsystem requires building the C++ components:
+
+```bash
+cd rocm_perf_lab/replay
+mkdir -p build
+cd build
+cmake ..
+make -j
+```
+
+This produces:
+
+- `rocm_perf_replay_full_vm`
+- `vm_reserve_only`
+
+These binaries are invoked by the CLI via:
+
+```bash
+rocm-perf replay full-vm
+rocm-perf replay reserve-check
+```
+
+---
+
 ## Quickstart (MI300X / gfx942)
 
-### 1. Setup
-No CMake build is required.
-
-Ensure:
-- ROCm toolchain is installed and `hipcc` is available
-- `rocprofv3` is on your PATH
-- The `rocm-perf-lab` CLI is installed (e.g., `pip install -e .` from the project root)
+### 1. Profile
 
 ### 2. Profile
 ```bash
