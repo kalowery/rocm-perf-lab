@@ -174,7 +174,97 @@ The goal is not maximal automation, but safe, reproducible performance improveme
 
 ---
 
-# 8. Validation Context
+# 8. Deterministic Kernel Isolation & VA-Faithful Replay
+
+A key extension of rocm-perf-lab is the ability to perform **deterministic cross-process kernel reproduction**.
+
+## 8.1 Motivation
+
+Performance debugging and research often require isolating a single kernel dispatch and reproducing it outside the original application.
+
+Traditional approaches rely on:
+
+- Synthetic test harnesses
+- Pointer rewriting
+- Partial memory reconstruction
+
+These approaches do not guarantee that the reproduced execution matches the original virtual memory layout or pointer topology.
+
+rocm-perf-lab instead implements **strict virtual-address–faithful replay**.
+
+---
+
+## 8.2 Isolation Mechanism
+
+The isolation tool uses the HSA Tools API (not LD_PRELOAD) to intercept queue creation and dispatch submission.
+
+Captured artifacts:
+
+```
+isolate_capture/
+    dispatch.json
+    kernarg.bin
+    kernel.hsaco
+    memory_regions.json
+    memory/region_<base>.bin
+```
+
+The snapshot includes:
+
+- Original grid/workgroup dimensions
+- Kernel object metadata
+- Full device memory contents prior to dispatch
+- Original virtual address layout
+
+No pointer rewriting or relocation occurs during capture.
+
+---
+
+## 8.3 VM Reconstruction Model
+
+Replay uses AMD virtual memory APIs:
+
+- `hsa_amd_vmem_address_reserve`
+- `hsa_amd_vmem_handle_create`
+- `hsa_amd_vmem_map`
+- `hsa_amd_vmem_set_access`
+
+All reservations are page-aligned.
+
+Replay aborts immediately if:
+
+- Reservation fails
+- Returned base ≠ requested aligned base
+- Any mapping or copy step fails
+
+Memory is reconstructed **before executable load** to avoid address conflicts.
+
+This ensures strict pointer stability.
+
+---
+
+## 8.4 Reproducibility Guarantees
+
+On CDNA-class GPUs (e.g., gfx942 / MI325), deterministic fixed-address reservation is supported.
+
+Under these conditions, replay guarantees:
+
+- Identical virtual addresses
+- Identical kernel object
+- Identical dispatch geometry
+- Identical device memory state
+
+The replayed kernel therefore executes in an environment equivalent to the original dispatch.
+
+This provides a foundation for:
+
+- Reproducible microarchitectural experiments
+- Controlled performance regression testing
+- Academic analysis of kernel behavior
+
+---
+
+# 9. Validation Context
 
 Validated on:
 
@@ -183,11 +273,11 @@ Validated on:
 - ROCm 7.1
 - rocprofv3
 
-Closed-loop optimization has been exercised end-to-end on hardware with regression detection enabled.
+Closed-loop optimization and VA-faithful replay have been exercised end-to-end on hardware.
 
 ---
 
-# 9. Conclusion
+# 10. Conclusion
 
 rocm-perf-lab connects low-level hardware measurement to high-level optimization decisions. By combining architecture-aware modeling, trace-derived execution analysis, and strictly guarded program transformation, it enables performance improvements that are both measurable and safe.
 
