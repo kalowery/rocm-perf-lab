@@ -126,6 +126,27 @@ static decltype(hsa_amd_memory_pool_allocate)*
 static decltype(hsa_amd_memory_pool_free)*
     real_memory_pool_free = nullptr;
 
+static decltype(hsa_amd_vmem_address_reserve)*
+    real_vmem_address_reserve = nullptr;
+
+static decltype(hsa_amd_vmem_address_free)*
+    real_vmem_address_free = nullptr;
+
+static decltype(hsa_amd_vmem_handle_create)*
+    real_vmem_handle_create = nullptr;
+
+static decltype(hsa_amd_vmem_handle_release)*
+    real_vmem_handle_release = nullptr;
+
+static decltype(hsa_amd_vmem_map)*
+    real_vmem_map = nullptr;
+
+static decltype(hsa_amd_vmem_unmap)*
+    real_vmem_unmap = nullptr;
+
+static decltype(hsa_amd_vmem_set_access)*
+    real_vmem_set_access = nullptr;
+
 /* ================================================================
    Reader interception (memory-based only)
    ================================================================ */
@@ -183,6 +204,68 @@ static hsa_status_t intercepted_memory_pool_free(void* ptr)
 /* ================================================================
    Reader interception (memory-based only)
    ================================================================ */
+
+/* ================================================================
+   VMEM interception (forward-only for Phase 1)
+   ================================================================ */
+
+static hsa_status_t intercepted_vmem_address_reserve(
+    void** va,
+    size_t size,
+    uint64_t address,
+    uint64_t flags)
+{
+    return real_vmem_address_reserve(va, size, address, flags);
+}
+
+static hsa_status_t intercepted_vmem_address_free(
+    void* va,
+    size_t size)
+{
+    return real_vmem_address_free(va, size);
+}
+
+static hsa_status_t intercepted_vmem_handle_create(
+    hsa_amd_memory_pool_t pool,
+    size_t size,
+    hsa_amd_memory_type_t type,
+    uint64_t flags,
+    hsa_amd_vmem_alloc_handle_t* memory_handle)
+{
+    return real_vmem_handle_create(pool, size, type, flags, memory_handle);
+}
+
+static hsa_status_t intercepted_vmem_handle_release(
+    hsa_amd_vmem_alloc_handle_t memory_handle)
+{
+    return real_vmem_handle_release(memory_handle);
+}
+
+static hsa_status_t intercepted_vmem_map(
+    void* va,
+    size_t size,
+    size_t in_offset,
+    hsa_amd_vmem_alloc_handle_t memory_handle,
+    uint64_t flags)
+{
+    return real_vmem_map(va, size, in_offset, memory_handle, flags);
+}
+
+static hsa_status_t intercepted_vmem_unmap(
+    void* va,
+    size_t size)
+{
+    return real_vmem_unmap(va, size);
+}
+
+static hsa_status_t intercepted_vmem_set_access(
+    void* va,
+    size_t size,
+    const hsa_amd_memory_access_desc_t* desc,
+    size_t desc_cnt)
+{
+    return real_vmem_set_access(va, size, desc, desc_cnt);
+}
 
 static hsa_status_t intercepted_reader_create_from_memory(
     const void* code_object,
@@ -485,6 +568,27 @@ PUBLIC_API bool OnLoad(
     real_memory_pool_free =
         table->amd_ext_->hsa_amd_memory_pool_free_fn;
 
+    real_vmem_address_reserve =
+        table->amd_ext_->hsa_amd_vmem_address_reserve_fn;
+
+    real_vmem_address_free =
+        table->amd_ext_->hsa_amd_vmem_address_free_fn;
+
+    real_vmem_handle_create =
+        table->amd_ext_->hsa_amd_vmem_handle_create_fn;
+
+    real_vmem_handle_release =
+        table->amd_ext_->hsa_amd_vmem_handle_release_fn;
+
+    real_vmem_map =
+        table->amd_ext_->hsa_amd_vmem_map_fn;
+
+    real_vmem_unmap =
+        table->amd_ext_->hsa_amd_vmem_unmap_fn;
+
+    real_vmem_set_access =
+        table->amd_ext_->hsa_amd_vmem_set_access_fn;
+
     if (!real_memory_pool_allocate) {
         fprintf(stderr, "[DEBUG] hsa_amd_memory_pool_allocate_fn is NULL at OnLoad\n");
     }
@@ -509,6 +613,27 @@ PUBLIC_API bool OnLoad(
 
     table->amd_ext_->hsa_amd_memory_pool_free_fn =
         intercepted_memory_pool_free;
+
+    table->amd_ext_->hsa_amd_vmem_address_reserve_fn =
+        intercepted_vmem_address_reserve;
+
+    table->amd_ext_->hsa_amd_vmem_address_free_fn =
+        intercepted_vmem_address_free;
+
+    table->amd_ext_->hsa_amd_vmem_handle_create_fn =
+        intercepted_vmem_handle_create;
+
+    table->amd_ext_->hsa_amd_vmem_handle_release_fn =
+        intercepted_vmem_handle_release;
+
+    table->amd_ext_->hsa_amd_vmem_map_fn =
+        intercepted_vmem_map;
+
+    table->amd_ext_->hsa_amd_vmem_unmap_fn =
+        intercepted_vmem_unmap;
+
+    table->amd_ext_->hsa_amd_vmem_set_access_fn =
+        intercepted_vmem_set_access;
 
     return true;
 }
