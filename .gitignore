@@ -14,3 +14,8 @@ venv/
 
 # OS
 .DS_Store
+
+# Isolation runtime artifacts
+rocm_perf_lab/isolate/tool/isolate_capture/
+rocm_perf_lab/isolate/tool/snapshot_called.txt
+memory_latency_test.cpp
