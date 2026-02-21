@@ -189,12 +189,37 @@ int main() {
 
     uint64_t kernel_object = 0;
     uint32_t kernarg_size = 0;
+    uint32_t private_segment_size = 0;
+    uint32_t group_segment_size = 0;
+
     hsa_executable_symbol_get_info(search.sym,
         HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_OBJECT,
         &kernel_object);
     hsa_executable_symbol_get_info(search.sym,
         HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_KERNARG_SEGMENT_SIZE,
         &kernarg_size);
+    hsa_executable_symbol_get_info(search.sym,
+        HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_PRIVATE_SEGMENT_SIZE,
+        &private_segment_size);
+    hsa_executable_symbol_get_info(search.sym,
+        HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_GROUP_SEGMENT_SIZE,
+        &group_segment_size);
+
+    // ---- Parse dispatch.json for dimensions ----
+    std::ifstream dfile("../../isolate/tool/isolate_capture/dispatch.json");
+    std::string dcontents((std::istreambuf_iterator<char>(dfile)),
+                           std::istreambuf_iterator<char>());
+
+    auto extract = [&](const std::string& key) -> uint32_t {
+        auto p = dcontents.find(key);
+        if (p == std::string::npos) return 1;
+        auto s = dcontents.find_first_of("0123456789", p);
+        auto e = dcontents.find_first_not_of("0123456789", s);
+        return static_cast<uint32_t>(std::stoul(dcontents.substr(s, e - s)));
+    };
+
+    uint32_t grid_x  = extract("\"grid\": [");
+    uint32_t block_x = extract("\"block\": [");
 
     // ---- Allocate kernarg ----
     void* kernarg = nullptr;
@@ -237,16 +262,16 @@ int main() {
     pkt->kernel_object = kernel_object;
     pkt->kernarg_address = kernarg;
 
-    pkt->grid_size_x = 1;
+    pkt->grid_size_x = grid_x;
     pkt->grid_size_y = 1;
     pkt->grid_size_z = 1;
 
-    pkt->workgroup_size_x = 1;
+    pkt->workgroup_size_x = block_x;
     pkt->workgroup_size_y = 1;
     pkt->workgroup_size_z = 1;
 
-    pkt->private_segment_size = 0;
-    pkt->group_segment_size = 0;
+    pkt->private_segment_size = private_segment_size;
+    pkt->group_segment_size = group_segment_size;
 
     pkt->completion_signal = completion_signal;
 
