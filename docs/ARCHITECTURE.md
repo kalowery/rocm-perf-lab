@@ -200,7 +200,98 @@ The system is empirical: only measured improvements are retained.
 
 ---
 
-# 8. Validation Context
+# 8. Kernel Isolation & VA-Faithful Replay
+
+The system now includes a **kernel isolation and full virtual-address (VA) faithful replay subsystem**.
+
+## 8.1 Isolation Tool (HSA Tools API)
+
+The isolation tool operates via the HSA Tools API (not LD_PRELOAD) and intercepts:
+
+- `hsa_queue_create`
+- `hsa_amd_queue_intercept_create`
+- `hsa_amd_queue_intercept_register`
+- Executable symbol queries
+
+Captured artifacts:
+
+```
+isolate_capture/
+    dispatch.json
+    kernarg.bin
+    kernel.hsaco
+    memory_regions.json
+    memory/region_<base>.bin
+```
+
+The tool snapshots:
+
+- Kernel dispatch metadata (grid/workgroup)
+- Private/group segment sizes
+- HSACO code object
+- Full device memory state prior to dispatch
+
+Thread safety is enforced via explicit locking. No dynamic allocation occurs inside low-level interceptors.
+
+---
+
+## 8.2 VM Diagnostic Tool
+
+CLI:
+
+```
+rocm-perf replay reserve-check
+```
+
+This tool validates whether the current GPU supports deterministic fixed-address VM reservation.
+
+Properties:
+
+- Page-aligned reservation
+- Strict equality check on returned base address
+- Structured summary output
+- Exit codes:
+  - `0` → exact reservation success
+  - `1` → reservation failure
+  - `2` → relocation detected
+
+CDNA-class GPUs (e.g., MI325 / gfx942) support deterministic reservation.
+Some APUs (e.g., gfx1035) reject arbitrary fixed-address reservations.
+
+---
+
+## 8.3 Full VA-Faithful Replay
+
+CLI:
+
+```
+rocm-perf replay full-vm
+```
+
+Replay guarantees:
+
+- ISA validation against captured metadata
+- Page-aligned `hsa_amd_vmem_address_reserve`
+- Exact-address enforcement (abort on relocation)
+- Handle creation, mapping, access rights setup
+- Offset-correct `hsa_memory_copy`
+- Memory reconstruction before executable load
+- Correct AQL packet construction
+- Completion signal synchronization
+- Original grid/workgroup dimensions restored from `dispatch.json`
+
+Replay aborts immediately if:
+
+- Any reservation fails
+- Reserved base ≠ requested aligned base
+- Handle/map/access/copy fails
+- ISA mismatch occurs
+
+This produces deterministic cross-process kernel reproduction on CDNA-class GPUs.
+
+---
+
+# 9. Validation Context
 
 Validated on:
 
