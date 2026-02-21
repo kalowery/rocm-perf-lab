@@ -7,8 +7,13 @@ set(CMAKE_PREFIX_PATH "/opt/rocm" ${CMAKE_PREFIX_PATH})
 find_package(hsa-runtime64 REQUIRED)
 
 add_executable(rocm_perf_replay replay.cpp)
+add_executable(rocm_perf_replay_full_vm replay_full_vm.cpp)
 
 target_link_libraries(rocm_perf_replay
+    PRIVATE hsa-runtime64::hsa-runtime64
+)
+
+target_link_libraries(rocm_perf_replay_full_vm
     PRIVATE hsa-runtime64::hsa-runtime64
 )
 
