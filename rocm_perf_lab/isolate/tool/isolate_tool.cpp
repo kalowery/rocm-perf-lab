@@ -55,9 +55,42 @@ static std::unordered_map<uint64_t, std::vector<uint8_t>> g_pending_reader_blobs
 static std::unordered_map<uint64_t, std::vector<uint8_t>> g_executable_blobs;
 static std::unordered_map<uint64_t, std::vector<uint8_t>> g_kernel_hsaco;
 
-static uint64_t g_last_loaded_executable = 0;
-
 static std::mutex g_code_object_mutex;
+
+/* ================================================================
+   Symbol iteration callback for HSACO association
+   ================================================================ */
+
+static hsa_status_t hsaco_symbol_callback(
+    hsa_executable_t executable,
+    hsa_executable_symbol_t symbol,
+    void* data)
+{
+    auto* blob = reinterpret_cast<std::vector<uint8_t>*>(data);
+
+    hsa_symbol_kind_t kind;
+    real_symbol_get_info(
+        symbol,
+        HSA_EXECUTABLE_SYMBOL_INFO_TYPE,
+        &kind);
+
+    if (kind != HSA_SYMBOL_KIND_KERNEL)
+        return HSA_STATUS_SUCCESS;
+
+    uint64_t kernel_object = 0;
+    real_symbol_get_info(
+        symbol,
+        HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_OBJECT,
+        &kernel_object);
+
+    if (kernel_object == 0)
+        return HSA_STATUS_SUCCESS;
+
+    std::lock_guard<std::mutex> lock(g_code_object_mutex);
+    g_kernel_hsaco[kernel_object] = *blob;
+
+    return HSA_STATUS_SUCCESS;
+}
 
 /* Original function pointers (to be wired later) */
 static decltype(hsa_code_object_reader_create_from_memory)*
@@ -109,16 +142,29 @@ static hsa_status_t intercepted_load_agent_code_object(
             loaded_code_object);
 
     if (status == HSA_STATUS_SUCCESS) {
-        std::lock_guard<std::mutex> lock(g_code_object_mutex);
+        std::vector<uint8_t>* blob_ptr = nullptr;
 
-        auto it = g_pending_reader_blobs.find(reader.handle);
-        if (it != g_pending_reader_blobs.end()) {
-            g_executable_blobs[executable.handle] = std::move(it->second);
-            g_pending_reader_blobs.erase(it);
+        {
+            std::lock_guard<std::mutex> lock(g_code_object_mutex);
+
+            auto it = g_pending_reader_blobs.find(reader.handle);
+            if (it != g_pending_reader_blobs.end()) {
+                g_executable_blobs[executable.handle] = std::move(it->second);
+                g_pending_reader_blobs.erase(it);
+            }
+
+            auto exec_it = g_executable_blobs.find(executable.handle);
+            if (exec_it != g_executable_blobs.end()) {
+                blob_ptr = &exec_it->second;
+            }
         }
 
-        // Track most recently loaded executable
-        g_last_loaded_executable = executable.handle;
+        if (blob_ptr) {
+            g_api_table->core_->hsa_executable_iterate_symbols_fn(
+                executable,
+                hsaco_symbol_callback,
+                blob_ptr);
+        }
     }
 
     return status;
@@ -160,12 +206,11 @@ static hsa_status_t intercepted_symbol_get_info(
                 mangled.data());
         }
 
-        // Attempt demangling
         std::string demangled;
         if (!mangled.empty()) {
-            int status = 0;
-            char* result = abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, &status);
-            if (status == 0 && result) {
+            int status_dm = 0;
+            char* result = abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, &status_dm);
+            if (status_dm == 0 && result) {
                 demangled = result;
                 free(result);
             } else if (result) {
@@ -175,15 +220,6 @@ static hsa_status_t intercepted_symbol_get_info(
 
         std::lock_guard<std::mutex> lock(g_kernel_mutex);
         g_kernel_cache[kernel_object] = { mangled, demangled, kernarg_size };
-        
-        // Associate kernel_object with last loaded executable HSACO if available
-        {
-            std::lock_guard<std::mutex> lock2(g_code_object_mutex);
-            auto it = g_executable_blobs.find(g_last_loaded_executable);
-            if (it != g_executable_blobs.end()) {
-                g_kernel_hsaco[kernel_object] = it->second;
-            }
-        }
     }
 
     return status;
@@ -252,6 +288,22 @@ static void OnSubmitPackets(
 
         // Persist to filesystem
         system("mkdir -p isolate_capture");
+
+        // Persist HSACO blob if available
+        std::vector<uint8_t> hsaco_copy;
+        {
+            std::lock_guard<std::mutex> lock(g_code_object_mutex);
+            auto it = g_kernel_hsaco.find(pkt.kernel_object);
+            if (it != g_kernel_hsaco.end()) {
+                hsaco_copy = it->second;
+            }
+        }
+
+        if (!hsaco_copy.empty()) {
+            std::ofstream hsaco("isolate_capture/kernel.hsaco", std::ios::binary);
+            hsaco.write(reinterpret_cast<const char*>(hsaco_copy.data()), hsaco_copy.size());
+            hsaco.close();
+        }
 
         std::ofstream meta("isolate_capture/dispatch.json");
         meta << "{\n";
