@@ -8,12 +8,17 @@ find_package(hsa-runtime64 REQUIRED)
 
 add_executable(rocm_perf_replay replay.cpp)
 add_executable(rocm_perf_replay_full_vm replay_full_vm.cpp)
+add_executable(vm_reserve_only vm_reserve_only.cpp)
 
 target_link_libraries(rocm_perf_replay
     PRIVATE hsa-runtime64::hsa-runtime64
 )
 
 target_link_libraries(rocm_perf_replay_full_vm
+    PRIVATE hsa-runtime64::hsa-runtime64
+)
+
+target_link_libraries(vm_reserve_only
     PRIVATE hsa-runtime64::hsa-runtime64
 )
 
