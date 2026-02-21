@@ -228,10 +228,22 @@ int main()
             base,
             0);
 
-        if (status != HSA_STATUS_SUCCESS || reserved != (void*)base) {
+        if (status != HSA_STATUS_SUCCESS) {
+            const char* status_str = nullptr;
+            hsa_status_string(status, &status_str);
+
             std::cout << "FAILED\n";
             std::cerr << "VA reservation failed at 0x"
-                      << std::hex << base << "\n";
+                      << std::hex << base << "\n"
+                      << "Status code: " << std::dec << status
+                      << " (" << (status_str ? status_str : "unknown") << ")\n";
+            return 1;
+        }
+
+        if (reserved != (void*)base) {
+            std::cout << "MISMATCH\n";
+            std::cerr << "Requested: 0x" << std::hex << base
+                      << "  Got: 0x" << reserved << "\n";
             return 1;
         }
 
