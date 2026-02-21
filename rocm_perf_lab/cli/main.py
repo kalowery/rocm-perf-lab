@@ -8,6 +8,50 @@ from rocm_perf_lab.autotune.tuner import autotune as run_autotune
 
 app = typer.Typer(no_args_is_help=True)
 
+# ==========================================================
+# Replay & VM Diagnostics Commands (registered early)
+# ==========================================================
+
+replay_app = typer.Typer(help="Replay and VM diagnostics tools.")
+
+@replay_app.command("full-vm")
+def replay_full_vm():
+    """
+    Perform full VM-faithful replay using reconstructed device memory.
+    """
+    from pathlib import Path
+    import subprocess
+
+    binary = Path(__file__).resolve().parent.parent / "replay" / "build" / "rocm_perf_replay_full_vm"
+
+    if not binary.exists():
+        typer.echo("Replay binary not built. Run CMake build in rocm_perf_lab/replay.")
+        raise typer.Exit(code=1)
+
+    result = subprocess.run([str(binary)], cwd=binary.parent)
+    raise typer.Exit(code=result.returncode)
+
+
+@replay_app.command("reserve-check")
+def replay_reserve_check():
+    """
+    Validate fixed-address VM reservation feasibility.
+    """
+    from pathlib import Path
+    import subprocess
+
+    binary = Path(__file__).resolve().parent.parent / "replay" / "build" / "vm_reserve_only"
+
+    if not binary.exists():
+        typer.echo("Diagnostic binary not built. Run CMake build in rocm_perf_lab/replay.")
+        raise typer.Exit(code=1)
+
+    result = subprocess.run([str(binary)], cwd=binary.parent)
+    raise typer.Exit(code=result.returncode)
+
+
+app.add_typer(replay_app, name="replay")
+
 
 @app.callback()
 def main(
