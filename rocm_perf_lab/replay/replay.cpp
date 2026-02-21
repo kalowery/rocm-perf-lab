@@ -7,6 +7,13 @@
 #include <vector>
 #include <cstring>
 
+struct PoolCtx {
+    hsa_amd_memory_pool_t* preferred_pool;
+    bool* found_preferred;
+    hsa_amd_memory_pool_t* fallback_pool;
+    bool* found_fallback;
+};
+
 static hsa_agent_t g_gpu_agent{};
 static std::string g_gpu_isa_name;
 
@@ -269,12 +276,12 @@ int main()
     bool found_fallback = false;
 
     auto pool_cb = [](hsa_amd_memory_pool_t pool, void* data) -> hsa_status_t {
-        auto* ctx = reinterpret_cast<std::tuple<hsa_amd_memory_pool_t*, bool*, hsa_amd_memory_pool_t*, bool*>*>(data);
+        auto* ctx = reinterpret_cast<PoolCtx*>(data);
 
-        auto& preferred_pool = *std::get<0>(*ctx);
-        auto& found_preferred = *std::get<1>(*ctx);
-        auto& fallback_pool = *std::get<2>(*ctx);
-        auto& found_fallback = *std::get<3>(*ctx);
+        auto& preferred_pool  = *ctx->preferred_pool;
+        auto& found_preferred = *ctx->found_preferred;
+        auto& fallback_pool   = *ctx->fallback_pool;
+        auto& found_fallback  = *ctx->found_fallback;
 
         hsa_amd_segment_t segment;
         hsa_amd_memory_pool_get_info(pool,
@@ -308,8 +315,12 @@ int main()
         return HSA_STATUS_SUCCESS;
     };
 
-    auto ctx = std::make_tuple(&kernarg_pool, &found_preferred,
-                               &fallback_pool, &found_fallback);
+    PoolCtx ctx{
+        &kernarg_pool,
+        &found_preferred,
+        &fallback_pool,
+        &found_fallback
+    };
 
     hsa_amd_agent_iterate_memory_pools(g_gpu_agent, pool_cb, &ctx);
 
