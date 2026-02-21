@@ -58,6 +58,27 @@ static std::unordered_map<uint64_t, std::vector<uint8_t>> g_kernel_hsaco;
 static std::mutex g_code_object_mutex;
 
 /* ================================================================
+   Device virtual memory tracking (Phase 1 groundwork)
+   ================================================================ */
+
+struct DeviceRegion {
+    uint64_t base;
+    size_t size;
+
+    bool is_pool_alloc;
+    hsa_agent_t agent;
+    hsa_amd_memory_pool_t pool;
+
+    bool is_vmem;
+    uint64_t handle;
+
+    uint32_t access_mask;
+};
+
+static std::vector<DeviceRegion> g_device_regions;
+static std::mutex g_region_mutex;
+
+/* ================================================================
    Symbol iteration callback for HSACO association
    ================================================================ */
 
@@ -98,6 +119,66 @@ static decltype(hsa_code_object_reader_create_from_memory)*
 
 static decltype(hsa_executable_load_agent_code_object)*
     real_load_agent_code_object = nullptr;
+
+static decltype(hsa_amd_memory_pool_allocate)*
+    real_memory_pool_allocate = nullptr;
+
+static decltype(hsa_amd_memory_pool_free)*
+    real_memory_pool_free = nullptr;
+
+/* ================================================================
+   Reader interception (memory-based only)
+   ================================================================ */
+
+/* ================================================================
+   Memory pool allocation interception
+   ================================================================ */
+
+static hsa_status_t intercepted_memory_pool_allocate(
+    hsa_amd_memory_pool_t pool,
+    size_t size,
+    uint32_t flags,
+    void** ptr)
+{
+    hsa_status_t status = real_memory_pool_allocate(pool, size, flags, ptr);
+
+    if (status == HSA_STATUS_SUCCESS && ptr && *ptr) {
+        DeviceRegion region{};
+        region.base = reinterpret_cast<uint64_t>(*ptr);
+        region.size = size;
+        region.is_pool_alloc = true;
+        region.pool = pool;
+        region.is_vmem = false;
+        region.handle = 0;
+        region.access_mask = 0;
+
+        std::lock_guard<std::mutex> lock(g_region_mutex);
+        if (g_device_regions.size() < g_device_regions.capacity()) {
+            g_device_regions.push_back(region);
+        }
+    }
+
+    return status;
+}
+
+static hsa_status_t intercepted_memory_pool_free(void* ptr)
+{
+    hsa_status_t status = real_memory_pool_free(ptr);
+
+    if (status == HSA_STATUS_SUCCESS && ptr) {
+        uint64_t base = reinterpret_cast<uint64_t>(ptr);
+        std::lock_guard<std::mutex> lock(g_region_mutex);
+        for (size_t i = 0; i < g_device_regions.size(); ++i) {
+            if (g_device_regions[i].base == base) {
+                g_device_regions[i] = g_device_regions.back();
+                g_device_regions.pop_back();
+                break;
+            }
+        }
+    }
+
+    return status;
+}
 
 /* ================================================================
    Reader interception (memory-based only)
@@ -383,6 +464,9 @@ PUBLIC_API bool OnLoad(
         }
     }
 
+    // Pre-reserve region tracking capacity to avoid allocations in hooks
+    g_device_regions.reserve(256);
+
     real_symbol_get_info =
         table->core_->hsa_executable_symbol_get_info_fn;
 
@@ -395,6 +479,19 @@ PUBLIC_API bool OnLoad(
     real_load_agent_code_object =
         table->core_->hsa_executable_load_agent_code_object_fn;
 
+    real_memory_pool_allocate =
+        table->amd_ext_->hsa_amd_memory_pool_allocate_fn;
+
+    real_memory_pool_free =
+        table->amd_ext_->hsa_amd_memory_pool_free_fn;
+
+    if (!real_memory_pool_allocate) {
+        fprintf(stderr, "[DEBUG] hsa_amd_memory_pool_allocate_fn is NULL at OnLoad\n");
+    }
+    if (!real_memory_pool_free) {
+        fprintf(stderr, "[DEBUG] hsa_amd_memory_pool_free_fn is NULL at OnLoad\n");
+    }
+
     table->core_->hsa_executable_symbol_get_info_fn =
         intercepted_symbol_get_info;
 
@@ -406,6 +503,12 @@ PUBLIC_API bool OnLoad(
 
     table->core_->hsa_executable_load_agent_code_object_fn =
         intercepted_load_agent_code_object;
+
+    table->amd_ext_->hsa_amd_memory_pool_allocate_fn =
+        intercepted_memory_pool_allocate;
+
+    table->amd_ext_->hsa_amd_memory_pool_free_fn =
+        intercepted_memory_pool_free;
 
     return true;
 }
