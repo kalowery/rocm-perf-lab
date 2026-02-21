@@ -207,21 +207,72 @@ int main() {
 
     // ---- Create queue ----
     hsa_queue_t* queue = nullptr;
-    hsa_queue_create(g_gpu_agent, 128, HSA_QUEUE_TYPE_MULTI,
-                     nullptr, nullptr, 0, 0, &queue);
+    hsa_status_t st = hsa_queue_create(
+        g_gpu_agent,
+        128,
+        HSA_QUEUE_TYPE_MULTI,
+        nullptr,
+        nullptr,
+        0,
+        0,
+        &queue);
 
+    if (st != HSA_STATUS_SUCCESS) {
+        std::cerr << "Queue creation failed\n";
+        return 1;
+    }
+
+    // ---- Create completion signal ----
+    hsa_signal_t completion_signal;
+    hsa_signal_create(1, 0, nullptr, &completion_signal);
+
+    // ---- Prepare dispatch packet ----
     uint64_t idx = hsa_queue_load_write_index_relaxed(queue);
-    auto* pkt = reinterpret_cast<hsa_kernel_dispatch_packet_t*>(queue->base_address) + idx;
+
+    auto* pkt = reinterpret_cast<hsa_kernel_dispatch_packet_t*>(
+        queue->base_address) + idx;
+
     memset(pkt, 0, sizeof(*pkt));
 
     pkt->kernel_object = kernel_object;
     pkt->kernarg_address = kernarg;
-    pkt->grid_size_x = 1;
-    pkt->workgroup_size_x = 1;
 
+    pkt->grid_size_x = 1;
+    pkt->grid_size_y = 1;
+    pkt->grid_size_z = 1;
+
+    pkt->workgroup_size_x = 1;
+    pkt->workgroup_size_y = 1;
+    pkt->workgroup_size_z = 1;
+
+    pkt->private_segment_size = 0;
+    pkt->group_segment_size = 0;
+
+    pkt->completion_signal = completion_signal;
+
+    // ---- Setup packet header ----
+    uint16_t header =
+        (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) |
+        (1 << HSA_PACKET_HEADER_BARRIER);
+
+    pkt->header = header;
+    pkt->setup =
+        (1 << HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS);
+
+    // ---- Publish packet ----
+    hsa_queue_store_write_index_relaxed(queue, idx + 1);
     hsa_signal_store_relaxed(queue->doorbell_signal, idx);
 
-    std::cout << "Dispatch submitted.\n";
+    // ---- Wait for completion ----
+    while (hsa_signal_wait_relaxed(
+               completion_signal,
+               HSA_SIGNAL_CONDITION_EQ,
+               0,
+               UINT64_MAX,
+               HSA_WAIT_STATE_ACTIVE) != 0) {
+    }
+
+    std::cout << "Dispatch completed.\n";
 
     hsa_shut_down();
     return 0;
