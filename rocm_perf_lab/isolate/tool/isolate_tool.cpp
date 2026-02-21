@@ -8,11 +8,15 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <regex>
+#include <memory>
+#include <cxxabi.h>
 
 #define PUBLIC_API __attribute__((visibility("default")))
 
 struct KernelInfo {
-    std::string name;
+    std::string mangled_name;
+    std::string demangled_name;
     uint32_t kernarg_size;
 };
 
@@ -31,10 +35,17 @@ static decltype(hsa_executable_symbol_get_info)* real_symbol_get_info = nullptr;
 static decltype(hsa_queue_create)* real_queue_create = nullptr;
 
 static std::unordered_map<uint64_t, KernelInfo> g_kernel_cache;
-static std::vector<CapturedDispatch> g_dispatches;
+static std::unordered_map<uint64_t, uint64_t> g_dispatch_counters;
 
 static std::mutex g_kernel_mutex;
-static std::mutex g_dispatch_mutex;
+static std::mutex g_capture_mutex;
+
+// Capture configuration
+static std::string g_capture_kernel;
+static std::unique_ptr<std::regex> g_capture_regex;
+static long long g_capture_index = -1; // 0-based
+static bool g_capture_enabled = false;
+static bool g_capture_done = false;
 
 static hsa_status_t intercepted_symbol_get_info(
     hsa_executable_symbol_t symbol,
@@ -63,17 +74,30 @@ static hsa_status_t intercepted_symbol_get_info(
             HSA_EXECUTABLE_SYMBOL_INFO_NAME_LENGTH,
             &name_len);
 
-        std::string name;
+        std::string mangled;
         if (name_len > 0) {
-            name.resize(name_len);
+            mangled.resize(name_len);
             real_symbol_get_info(
                 symbol,
                 HSA_EXECUTABLE_SYMBOL_INFO_NAME,
-                name.data());
+                mangled.data());
+        }
+
+        // Attempt demangling
+        std::string demangled;
+        if (!mangled.empty()) {
+            int status = 0;
+            char* result = abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, &status);
+            if (status == 0 && result) {
+                demangled = result;
+                free(result);
+            } else if (result) {
+                free(result);
+            }
         }
 
         std::lock_guard<std::mutex> lock(g_kernel_mutex);
-        g_kernel_cache[kernel_object] = { name, kernarg_size };
+        g_kernel_cache[kernel_object] = { mangled, demangled, kernarg_size };
     }
 
     return status;
@@ -110,30 +134,56 @@ static void OnSubmitPackets(
         if (info.kernarg_size == 0)
             continue;
 
-        CapturedDispatch cd{};
-        cd.kernel_object = pkt.kernel_object;
+        bool should_capture = false;
+        uint64_t dispatch_index = 0;
 
-        cd.grid[0] = pkt.grid_size_x;
-        cd.grid[1] = pkt.grid_size_y;
-        cd.grid[2] = pkt.grid_size_z;
+        {
+            std::lock_guard<std::mutex> lock(g_capture_mutex);
 
-        cd.block[0] = pkt.workgroup_size_x;
-        cd.block[1] = pkt.workgroup_size_y;
-        cd.block[2] = pkt.workgroup_size_z;
+            dispatch_index = g_dispatch_counters[pkt.kernel_object]++;
 
-        cd.group_segment_size = pkt.group_segment_size;
-        cd.private_segment_size = pkt.private_segment_size;
+            if (g_capture_enabled && !g_capture_done) {
+                const std::string& match_name =
+                    !info.demangled_name.empty() ? info.demangled_name : info.mangled_name;
 
-        cd.kernarg_copy.resize(info.kernarg_size);
+                if (g_capture_regex &&
+                    std::regex_search(match_name, *g_capture_regex) &&
+                    dispatch_index == (uint64_t)g_capture_index) {
+                    should_capture = true;
+                    g_capture_done = true;
+                }
+            }
+        }
 
-        memcpy(cd.kernarg_copy.data(),
+        if (!should_capture)
+            continue;
+
+        // Perform capture outside lock
+        std::vector<uint8_t> kernarg_copy(info.kernarg_size);
+        memcpy(kernarg_copy.data(),
                reinterpret_cast<const void*>(pkt.kernarg_address),
                info.kernarg_size);
 
-        {
-            std::lock_guard<std::mutex> lock(g_dispatch_mutex);
-            g_dispatches.push_back(std::move(cd));
-        }
+        // Persist to filesystem
+        system("mkdir -p isolate_capture");
+
+        std::ofstream meta("isolate_capture/dispatch.json");
+        meta << "{\n";
+        meta << "  \"mangled_name\": \"" << info.mangled_name << "\",\n";
+        meta << "  \"demangled_name\": \"" << info.demangled_name << "\",\n";
+        meta << "  \"kernel_object\": " << pkt.kernel_object << ",\n";
+        meta << "  \"grid\": [" << pkt.grid_size_x << ", " << pkt.grid_size_y << ", " << pkt.grid_size_z << "],\n";
+        meta << "  \"block\": [" << pkt.workgroup_size_x << ", " << pkt.workgroup_size_y << ", " << pkt.workgroup_size_z << "],\n";
+        meta << "  \"group_segment_size\": " << pkt.group_segment_size << ",\n";
+        meta << "  \"private_segment_size\": " << pkt.private_segment_size << ",\n";
+        meta << "  \"kernarg_size\": " << info.kernarg_size << ",\n";
+        meta << "  \"dispatch_index\": " << dispatch_index << "\n";
+        meta << "}\n";
+        meta.close();
+
+        std::ofstream bin("isolate_capture/kernarg.bin", std::ios::binary);
+        bin.write(reinterpret_cast<const char*>(kernarg_copy.data()), kernarg_copy.size());
+        bin.close();
     }
 
     writer(in_packets, count);
@@ -180,6 +230,21 @@ PUBLIC_API bool OnLoad(
 {
     g_api_table = table;
 
+    // Parse environment variables for selective capture
+    const char* kernel_env = getenv("ISOLATE_KERNEL");
+    const char* index_env  = getenv("ISOLATE_DISPATCH_INDEX");
+
+    if (kernel_env && index_env) {
+        g_capture_kernel = kernel_env;
+        g_capture_index = atoll(index_env);
+        try {
+            g_capture_regex = std::make_unique<std::regex>(g_capture_kernel);
+            g_capture_enabled = true;
+        } catch (...) {
+            g_capture_enabled = false;
+        }
+    }
+
     real_symbol_get_info =
         table->core_->hsa_executable_symbol_get_info_fn;
 
@@ -198,10 +263,5 @@ PUBLIC_API bool OnLoad(
 extern "C"
 PUBLIC_API void OnUnload()
 {
-    std::lock_guard<std::mutex> lock(g_dispatch_mutex);
-
-    std::ofstream out("isolate_output.json");
-    out << "{ \"dispatch_count\": "
-        << g_dispatches.size()
-        << " }\n";
+    // No-op: capture persists immediately when selected
 }
