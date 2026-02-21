@@ -46,18 +46,27 @@ int main() {
         size_t size_end = contents.find_first_not_of("0123456789", size_start);
         size_t size = std::stoull(contents.substr(size_start, size_end - size_start));
 
+        // ---- Page-align reservation ----
+        const size_t page = 4096;
+        uint64_t aligned_base = base & ~(page - 1);
+        uint64_t end_addr = base + size;
+        uint64_t aligned_end = (end_addr + page - 1) & ~(page - 1);
+        size_t aligned_size = aligned_end - aligned_base;
+
         void* reserved = nullptr;
-        hsa_status_t st = hsa_amd_vmem_address_reserve(&reserved, size, base, 0);
+        hsa_status_t st = hsa_amd_vmem_address_reserve(&reserved, aligned_size, aligned_base, 0);
 
         std::cout << "Reserve 0x" << std::hex << base
-                  << " size " << std::dec << size << " -> ";
+                  << " (aligned 0x" << aligned_base << ")"
+                  << " size " << std::dec << size
+                  << " (aligned " << aligned_size << ") -> ";
 
         if (st != HSA_STATUS_SUCCESS) {
             const char* status_str = nullptr;
             hsa_status_string(st, &status_str);
             std::cout << "FAIL (" << (status_str ? status_str : "unknown") << ")\n";
             all_ok = false;
-        } else if (reserved != (void*)base) {
+        } else if (reserved != (void*)aligned_base) {
             std::cout << "MISMATCH (got 0x" << std::hex << reserved << ")\n";
             all_ok = false;
         } else {
