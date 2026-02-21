@@ -247,20 +247,37 @@ This ensures strict pointer stability.
 
 On CDNA-class GPUs (e.g., gfx942 / MI325), deterministic fixed-address reservation is supported.
 
-Under these conditions, replay guarantees:
+Under these conditions, replay guarantees (default mode):
 
 - Identical virtual addresses
 - Identical kernel object
 - Identical dispatch geometry
-- Identical device memory state
+- Identical device memory state (per iteration)
 
 The replayed kernel therefore executes in an environment equivalent to the original dispatch.
+
+Replay also supports multi-iteration execution:
+
+```
+rocm-perf replay full-vm --iterations N
+rocm-perf replay full-vm --iterations N --no-recopy
+```
+
+In multi-iteration mode:
+
+- VM layout is constructed once.
+- Completion signals are reset between dispatches.
+- Average GPU runtime per iteration is reported.
+
+When `--no-recopy` is omitted, memory is restored before each iteration, preserving deterministic behavior.
+When `--no-recopy` is enabled, execution becomes stateful and may diverge depending on kernel side effects.
 
 This provides a foundation for:
 
 - Reproducible microarchitectural experiments
 - Controlled performance regression testing
-- Academic analysis of kernel behavior
+- Deterministic kernel microbenchmarking
+- Stateful stress testing of kernel behavior
 
 ---
 

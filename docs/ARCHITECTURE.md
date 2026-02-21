@@ -266,9 +266,16 @@ CLI:
 
 ```
 rocm-perf replay full-vm
+rocm-perf replay full-vm --iterations N
+rocm-perf replay full-vm --iterations N --no-recopy
 ```
 
-Replay guarantees:
+Arguments:
+
+- `--iterations N` — replay the captured dispatch N times without rebuilding VM state.
+- `--no-recopy` — skip restoring device memory between iterations (stateful replay).
+
+Replay guarantees (default mode, no `--no-recopy`):
 
 - ISA validation against captured metadata
 - Page-aligned `hsa_amd_vmem_address_reserve`
@@ -287,7 +294,36 @@ Replay aborts immediately if:
 - Handle/map/access/copy fails
 - ISA mismatch occurs
 
-This produces deterministic cross-process kernel reproduction on CDNA-class GPUs.
+### Multi-Iteration Semantics
+
+In multi-iteration mode:
+
+- VM reservation and mapping occur once.
+- A single completion signal is reused and reset to `1` before each dispatch.
+- The AQL packet is rewritten for every iteration.
+
+Behavior differs depending on flags:
+
+**Default (`--iterations N` without `--no-recopy`):**
+
+- Device memory is recopied from the isolation snapshot before each iteration.
+- Each dispatch sees an identical device memory state.
+- Execution is deterministic if the kernel itself is deterministic.
+
+**Stateful mode (`--iterations N --no-recopy`):**
+
+- Memory is restored only once before the first iteration.
+- Subsequent iterations operate on the mutated device state.
+- Useful for stress testing and throughput benchmarking.
+
+Replay reports:
+
+- Iteration count
+- Whether memory recopy is enabled
+- Average GPU time per iteration
+- Total wall-clock time
+
+This produces deterministic cross-process kernel reproduction on CDNA-class GPUs (default mode) and a controlled stateful execution harness when `--no-recopy` is enabled.
 
 ---
 
