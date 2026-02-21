@@ -213,6 +213,141 @@ Only empirically validated improvements are retained.
 
 ---
 
+---
+
+# 8. Kernel Isolation & VA-Faithful Replay
+
+rocm-perf-lab includes a deterministic kernel isolation and replay subsystem.
+
+This enables capturing a single GPU kernel dispatch — including its full device memory state — and reproducing it in a separate process with identical virtual addresses.
+
+## 8.1 Isolation Snapshot
+
+When the isolation tool is enabled (HSA Tools API interception), it produces:
+
+```
+rocm_perf_lab/isolate/tool/isolate_capture/
+    dispatch.json
+    kernarg.bin
+    kernel.hsaco
+    memory_regions.json
+    memory/region_<base>.bin
+```
+
+The snapshot contains:
+
+- Original grid and workgroup dimensions
+- Kernel object metadata
+- HSACO code object
+- Full device memory contents prior to dispatch
+- Original virtual address layout
+
+No pointer rewriting or relocation is performed during capture.
+
+---
+
+## 8.2 Validate VM Feasibility
+
+Before replaying, validate that the current GPU supports fixed-address reservation:
+
+```bash
+rocm-perf replay reserve-check
+```
+
+This checks whether `hsa_amd_vmem_address_reserve` can reserve the captured addresses exactly.
+
+Exit codes:
+
+- `0` — exact reservation supported
+- `1` — reservation failure
+- `2` — relocation detected (address mismatch)
+
+CDNA-class GPUs (e.g., MI300X / MI325) support deterministic reservation.
+Some APUs may not.
+
+---
+
+## 8.3 Deterministic Replay
+
+Basic replay:
+
+```bash
+rocm-perf replay full-vm
+```
+
+Replay performs:
+
+1. VM reservation (page-aligned)
+2. Memory mapping and access setup
+3. Device memory reconstruction
+4. HSACO load and executable creation
+5. Correct AQL dispatch packet construction
+6. Completion signal wait
+
+If any VM step fails or relocation occurs, replay aborts.
+
+---
+
+## 8.4 Multi-Iteration Replay (Microbenchmark Mode)
+
+Replay can be executed multiple times without rebuilding VM state:
+
+```bash
+rocm-perf replay full-vm --iterations 100
+```
+
+Behavior:
+
+- VM reservation and mapping occur once.
+- Memory is recopied from the snapshot before each iteration.
+- Each iteration sees identical device memory state.
+- Average GPU time per iteration is reported.
+
+Example output:
+
+```
+Memory reconstructed.
+Iterations: 100
+Recopy between iterations: yes
+Average GPU time: 0.131 ms
+Total wall time: 13.4 ms
+```
+
+This mode is deterministic if the kernel itself is deterministic.
+
+---
+
+## 8.5 Stateful Replay Mode
+
+Replay can optionally skip memory restoration between iterations:
+
+```bash
+rocm-perf replay full-vm --iterations 100 --no-recopy
+```
+
+Behavior:
+
+- Memory is restored only once before the first iteration.
+- Subsequent iterations operate on mutated device state.
+- Useful for stress testing and throughput benchmarking.
+
+In this mode, execution may diverge depending on kernel side effects.
+
+---
+
+## 8.6 Timing Semantics
+
+Replay reports:
+
+- Iteration count
+- Whether memory recopy is enabled
+- Average GPU time per iteration
+- Total wall-clock time
+
+Timing excludes VM setup and reflects dispatch + completion wait time.
+
+---
+
 For deeper technical details, see:
 
 - `ARCHITECTURE.md`
