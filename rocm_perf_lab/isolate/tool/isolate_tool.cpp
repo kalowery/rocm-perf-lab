@@ -47,6 +47,83 @@ static long long g_capture_index = -1; // 0-based
 static bool g_capture_enabled = false;
 static bool g_capture_done = false;
 
+/* ================================================================
+   Code object tracking (HSACO capture groundwork)
+   ================================================================ */
+
+static std::unordered_map<uint64_t, std::vector<uint8_t>> g_pending_reader_blobs;
+static std::unordered_map<uint64_t, std::vector<uint8_t>> g_executable_blobs;
+static std::unordered_map<uint64_t, std::vector<uint8_t>> g_kernel_hsaco;
+
+static uint64_t g_last_loaded_executable = 0;
+
+static std::mutex g_code_object_mutex;
+
+/* Original function pointers (to be wired later) */
+static decltype(hsa_code_object_reader_create_from_memory)*
+    real_reader_create_from_memory = nullptr;
+
+static decltype(hsa_executable_load_agent_code_object)*
+    real_load_agent_code_object = nullptr;
+
+/* ================================================================
+   Reader interception (memory-based only)
+   ================================================================ */
+
+static hsa_status_t intercepted_reader_create_from_memory(
+    const void* code_object,
+    size_t size,
+    hsa_code_object_reader_t* reader)
+{
+    hsa_status_t status =
+        real_reader_create_from_memory(code_object, size, reader);
+
+    if (status == HSA_STATUS_SUCCESS && reader && size > 0) {
+        std::vector<uint8_t> blob(size);
+        memcpy(blob.data(), code_object, size);
+
+        std::lock_guard<std::mutex> lock(g_code_object_mutex);
+        g_pending_reader_blobs[reader->handle] = std::move(blob);
+    }
+
+    return status;
+}
+
+/* ================================================================
+   Executable load interception
+   ================================================================ */
+
+static hsa_status_t intercepted_load_agent_code_object(
+    hsa_executable_t executable,
+    hsa_agent_t agent,
+    hsa_code_object_reader_t reader,
+    const char* options,
+    hsa_loaded_code_object_t* loaded_code_object)
+{
+    hsa_status_t status =
+        real_load_agent_code_object(
+            executable,
+            agent,
+            reader,
+            options,
+            loaded_code_object);
+
+    if (status == HSA_STATUS_SUCCESS) {
+        std::lock_guard<std::mutex> lock(g_code_object_mutex);
+
+        auto it = g_pending_reader_blobs.find(reader.handle);
+        if (it != g_pending_reader_blobs.end()) {
+            g_executable_blobs[executable.handle] = std::move(it->second);
+            g_pending_reader_blobs.erase(it);
+        }
+
+        // Track most recently loaded executable
+        g_last_loaded_executable = executable.handle;
+    }
+
+    return status;
+}
+
 static hsa_status_t intercepted_symbol_get_info(
     hsa_executable_symbol_t symbol,
     hsa_executable_symbol_info_t attribute,
@@ -98,6 +175,15 @@ static hsa_status_t intercepted_symbol_get_info(
 
         std::lock_guard<std::mutex> lock(g_kernel_mutex);
         g_kernel_cache[kernel_object] = { mangled, demangled, kernarg_size };
+        
+        // Associate kernel_object with last loaded executable HSACO if available
+        {
+            std::lock_guard<std::mutex> lock2(g_code_object_mutex);
+            auto it = g_executable_blobs.find(g_last_loaded_executable);
+            if (it != g_executable_blobs.end()) {
+                g_kernel_hsaco[kernel_object] = it->second;
+            }
+        }
     }
 
     return status;
@@ -251,11 +337,23 @@ PUBLIC_API bool OnLoad(
     real_queue_create =
         table->core_->hsa_queue_create_fn;
 
+    real_reader_create_from_memory =
+        table->core_->hsa_code_object_reader_create_from_memory_fn;
+
+    real_load_agent_code_object =
+        table->core_->hsa_executable_load_agent_code_object_fn;
+
     table->core_->hsa_executable_symbol_get_info_fn =
         intercepted_symbol_get_info;
 
     table->core_->hsa_queue_create_fn =
         intercepted_queue_create;
+
+    table->core_->hsa_code_object_reader_create_from_memory_fn =
+        intercepted_reader_create_from_memory;
+
+    table->core_->hsa_executable_load_agent_code_object_fn =
+        intercepted_load_agent_code_object;
 
     return true;
 }
