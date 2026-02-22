@@ -390,7 +390,13 @@ int main(int argc, char** argv) {
     std::string mangled   = extract_string("\"mangled_name\":");
 
     if (demangled != "unknown") {
-        result.kernel_name = demangled;
+        // Normalize: strip trailing clone / suffix annotations like " [clone .kd]"
+        auto pos = demangled.find(" [");
+        if (pos != std::string::npos) {
+            result.kernel_name = demangled.substr(0, pos);
+        } else {
+            result.kernel_name = demangled;
+        }
     } else if (mangled != "unknown") {
         result.kernel_name = mangled;
     } else {
