@@ -111,6 +111,8 @@ int main(int argc, char** argv) {
             iterations = std::stoull(argv[++i]);
         } else if (arg == "--no-recopy") {
             recopy = false;
+        } else if (arg == "--json") {
+            json_output = true;
         }
     }
 
