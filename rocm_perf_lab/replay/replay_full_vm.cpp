@@ -34,6 +34,7 @@ struct ReplayResult {
     bool recopy;
 
     std::string kernel_name;
+    std::string hsaco_path;
 
     std::vector<uint64_t> raw_ns;
 
@@ -45,7 +46,8 @@ struct ReplayResult {
 static void print_json_output(const ReplayResult& r) {
     std::cout << "{\n";
     std::cout << "  \"kernel\": {\n";
-    std::cout << "    \"name\": \"" << r.kernel_name << "\"\n";
+    std::cout << "    \"name\": \"" << r.kernel_name << "\",\n";
+    std::cout << "    \"hsaco_path\": \"" << r.hsaco_path << "\"\n";
     std::cout << "  },\n";
     std::cout << "  \"execution\": {\n";
     std::cout << "    \"iterations\": " << r.iterations << ",\n";
@@ -312,6 +314,8 @@ int main(int argc, char** argv) {
     std::string hsaco_path = override_hsaco_path.empty()
         ? (capture_dir + "/kernel.hsaco")
         : override_hsaco_path;
+
+    result.hsaco_path = hsaco_path;
 
     std::ifstream hsaco_file(hsaco_path, std::ios::binary);
     if (!hsaco_file) {
