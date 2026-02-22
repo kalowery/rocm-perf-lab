@@ -22,6 +22,8 @@ def test_minimal_isolate_and_replay(tmp_path):
     # Run kernel with isolate enabled
     env = os.environ.copy()
     env["HSA_TOOLS_LIB"] = str(isolate_lib)
+    env["ISOLATE_KERNEL"] = "increment"
+    env["ISOLATE_DISPATCH_INDEX"] = "0"
 
     run([str(binary)], env=env)
 
