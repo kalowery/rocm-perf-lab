@@ -15,7 +15,9 @@ app = typer.Typer(no_args_is_help=True)
 replay_app = typer.Typer(help="Replay and VM diagnostics tools.")
 
 @replay_app.command("full-vm")
-def replay_full_vm():
+def replay_full_vm(
+    capture_dir: str = typer.Option(..., "--capture-dir", help="Path to isolate capture directory.")
+):
     """
     Perform full VM-faithful replay using reconstructed device memory.
     """
@@ -28,12 +30,14 @@ def replay_full_vm():
         typer.echo("Replay binary not built. Run CMake build in rocm_perf_lab/replay.")
         raise typer.Exit(code=1)
 
-    result = subprocess.run([str(binary)], cwd=binary.parent)
+    result = subprocess.run([str(binary), capture_dir], cwd=binary.parent)
     raise typer.Exit(code=result.returncode)
 
 
 @replay_app.command("reserve-check")
-def replay_reserve_check():
+def replay_reserve_check(
+    capture_dir: str = typer.Option(..., "--capture-dir", help="Path to isolate capture directory.")
+):
     """
     Validate fixed-address VM reservation feasibility.
     """
@@ -46,7 +50,7 @@ def replay_reserve_check():
         typer.echo("Diagnostic binary not built. Run CMake build in rocm_perf_lab/replay.")
         raise typer.Exit(code=1)
 
-    result = subprocess.run([str(binary)], cwd=binary.parent)
+    result = subprocess.run([str(binary), capture_dir], cwd=binary.parent)
     raise typer.Exit(code=result.returncode)
 
 
@@ -453,51 +457,6 @@ def llm_optimize(
         min_improvement=min_improvement,
         auto_approve=auto_approve,
     )
-
-
-# ==========================================================
-# Replay & VM Diagnostics Commands
-# ==========================================================
-
-replay_app = typer.Typer(help="Replay and VM diagnostics tools.")
-
-@replay_app.command("full-vm")
-def replay_full_vm():
-    """
-    Perform full VM-faithful replay using reconstructed device memory.
-    """
-    from pathlib import Path
-    import subprocess
-
-    binary = Path(__file__).resolve().parent.parent / "replay" / "build" / "rocm_perf_replay_full_vm"
-
-    if not binary.exists():
-        typer.echo("Replay binary not built. Run CMake build in rocm_perf_lab/replay.")
-        raise typer.Exit(code=1)
-
-    result = subprocess.run([str(binary)], cwd=binary.parent)
-    raise typer.Exit(code=result.returncode)
-
-
-@replay_app.command("reserve-check")
-def replay_reserve_check():
-    """
-    Validate fixed-address VM reservation feasibility.
-    """
-    from pathlib import Path
-    import subprocess
-
-    binary = Path(__file__).resolve().parent.parent / "replay" / "build" / "vm_reserve_only"
-
-    if not binary.exists():
-        typer.echo("Diagnostic binary not built. Run CMake build in rocm_perf_lab/replay.")
-        raise typer.Exit(code=1)
-
-    result = subprocess.run([str(binary)], cwd=binary.parent)
-    raise typer.Exit(code=result.returncode)
-
-
-app.add_typer(replay_app, name="replay")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,13 @@ static hsa_status_t find_gpu(hsa_agent_t agent, void*) {
     return HSA_STATUS_SUCCESS;
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::cerr << "Usage: vm_reserve_only <capture_dir>\n";
+        return 1;
+    }
+
+    std::string base = argv[1];
     if (hsa_init() != HSA_STATUS_SUCCESS) {
         std::cerr << "hsa_init failed\n";
         return 1;
@@ -26,7 +32,7 @@ int main() {
 
     const uint32_t page_size = 4096;
 
-    std::ifstream meta("../../isolate/tool/isolate_capture/memory_regions.json");
+    std::ifstream meta(base + "/memory_regions.json");
     if (!meta) {
         std::cerr << "memory_regions.json not found\n";
         return 1;

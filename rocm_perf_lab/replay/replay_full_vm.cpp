@@ -18,7 +18,13 @@ static hsa_status_t find_gpu(hsa_agent_t agent, void*) {
     return HSA_STATUS_SUCCESS;
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::cerr << "Usage: rocm_perf_replay_full_vm <capture_dir>\n";
+        return 1;
+    }
+
+    std::string base = argv[1];
     if (hsa_init() != HSA_STATUS_SUCCESS) {
         std::cerr << "hsa_init failed\n";
         return 1;
@@ -57,7 +63,7 @@ int main() {
     }
 
     // ---- Load region metadata ----
-    std::ifstream meta("../../isolate/tool/isolate_capture/memory_regions.json");
+    std::ifstream meta(base + "/memory_regions.json");
     if (!meta) {
         std::cerr << "memory_regions.json not found\n";
         return 1;
@@ -120,7 +126,7 @@ int main() {
         }
 
         std::stringstream fname;
-        fname << "../../isolate/tool/isolate_capture/memory/region_"
+        fname << base << "/memory/region_"
               << std::hex << base << ".bin";
 
         std::ifstream blobf(fname.str(), std::ios::binary);
@@ -145,7 +151,7 @@ int main() {
     // STAGE 2: LOAD EXECUTABLE AFTER MEMORY RESTORE
     // ==========================================================
 
-    std::ifstream hsaco_file("../../isolate/tool/isolate_capture/kernel.hsaco", std::ios::binary);
+    std::ifstream hsaco_file(base + "/kernel.hsaco", std::ios::binary);
     if (!hsaco_file) {
         std::cerr << "kernel.hsaco not found\n";
         return 1;
@@ -206,7 +212,7 @@ int main() {
         &group_segment_size);
 
     // ---- Parse dispatch.json for dimensions ----
-    std::ifstream dfile("../../isolate/tool/isolate_capture/dispatch.json");
+    std::ifstream dfile(base + "/dispatch.json");
     std::string dcontents((std::istreambuf_iterator<char>(dfile)),
                            std::istreambuf_iterator<char>());
 
@@ -225,7 +231,7 @@ int main() {
     void* kernarg = nullptr;
     hsa_amd_memory_pool_allocate(backing_pool, kernarg_size, 0, &kernarg);
 
-    std::ifstream kf("../../isolate/tool/isolate_capture/kernarg.bin", std::ios::binary);
+    std::ifstream kf(base + "/kernarg.bin", std::ios::binary);
     std::vector<char> kblob((std::istreambuf_iterator<char>(kf)),
                              std::istreambuf_iterator<char>());
     memcpy(kernarg, kblob.data(), kblob.size());

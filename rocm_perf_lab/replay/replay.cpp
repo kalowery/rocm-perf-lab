@@ -37,8 +37,14 @@ static hsa_status_t agent_callback(hsa_agent_t agent, void* data)
     return HSA_STATUS_SUCCESS;
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc < 2) {
+        std::cerr << "Usage: rocm_perf_replay <capture_dir>\n";
+        return 1;
+    }
+
+    std::string base = argv[1];
     if (hsa_init() != HSA_STATUS_SUCCESS) {
         std::cerr << "Failed to initialize HSA\n";
         return 1;
@@ -53,7 +59,7 @@ int main()
 
     std::cout << "Detected GPU ISA: " << g_gpu_isa_name << "\n";
 
-    std::ifstream meta("../../isolate/tool/isolate_capture/dispatch.json");
+    std::ifstream meta(base + "/dispatch.json");
     if (!meta) {
         std::cerr << "dispatch.json not found\n";
         return 1;
@@ -95,7 +101,7 @@ int main()
     std::cout << "Captured kernel: " << mangled_name << "\n";
 
     // Load HSACO blob
-    std::ifstream hsaco_file("../../isolate/tool/isolate_capture/kernel.hsaco", std::ios::binary);
+    std::ifstream hsaco_file(base + "/kernel.hsaco", std::ios::binary);
     if (!hsaco_file) {
         std::cerr << "kernel.hsaco not found\n";
         return 1;
