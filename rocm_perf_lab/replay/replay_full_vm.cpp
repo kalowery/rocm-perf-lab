@@ -49,6 +49,7 @@ static void print_json_output(const ReplayResult& r) {
     std::cout << "  },\n";
     std::cout << "  \"execution\": {\n";
     std::cout << "    \"iterations\": " << r.iterations << ",\n";
+    std::cout << "    \"mode\": \"" << (r.recopy ? "stateless" : "stateful") << "\",\n";
     std::cout << "    \"recopy\": " << (r.recopy ? "true" : "false") << "\n";
     std::cout << "  },\n";
     std::cout << "  \"timing\": {\n";
