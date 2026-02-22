@@ -150,7 +150,7 @@ rocm-perf replay reserve-check
 
 ### 2. Profile
 ```bash
-rocm-perf-lab profile ./your_app
+rocm-perf profile ./your_app
 ```
 
 Generates:
@@ -194,6 +194,78 @@ The optimizer:
    ```
 
 Replay reports average GPU time and total wall time.
+
+---
+
+## Running Integration Tests (MI325 / CDNA GPUs)
+
+The repository includes end‑to‑end integration tests that validate:
+
+- Kernel isolation via HSA Tools API
+- Virtual address–faithful replay
+- Device memory snapshot and reconstruction
+- Pointer‑dependent memory correctness (pointer‑chase test)
+
+These tests must be run on a ROCm system with a supported CDNA GPU (e.g., MI300X / MI325).
+
+### 1. Activate Python Environment
+
+```bash
+cd /work1/amd/klowery/workspace/rocm-perf-lab
+source /work1/amd/klowery/workspace/venv/bin/activate
+```
+
+### 2. Pull Latest Changes
+
+```bash
+git pull
+```
+
+### 3. Install Editable Package
+
+```bash
+pip install -e .
+```
+
+### 4. Build Native Components
+
+Build isolate tool:
+
+```bash
+cd rocm_perf_lab/isolate/tool
+mkdir -p build
+cd build
+cmake ..
+make -j
+```
+
+Build replay tools:
+
+```bash
+cd /work1/amd/klowery/workspace/rocm-perf-lab/rocm_perf_lab/replay
+mkdir -p build
+cd build
+cmake ..
+make -j
+```
+
+### 5. Run Integration Tests
+
+```bash
+cd /work1/amd/klowery/workspace/rocm-perf-lab
+pytest tests/integration -v
+```
+
+The current integration suite includes:
+
+- `test_minimal_isolate_and_replay` – simple arithmetic kernel
+- `test_pointer_chase_isolate_and_replay` – pointer‑chasing memory validation kernel
+
+Both tests:
+- Build a HIP test kernel
+- Run it with the isolate tool enabled
+- Validate snapshot creation
+- Perform deterministic VA‑faithful replay
 
 ---
 
