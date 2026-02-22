@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::string base = argv[1];
+    std::string capture_dir = argv[1];
     if (hsa_init() != HSA_STATUS_SUCCESS) {
         std::cerr << "hsa_init failed\n";
         return 1;
@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- Load region metadata ----
-    std::ifstream meta(base + "/memory_regions.json");
+    std::ifstream meta(capture_dir + "/memory_regions.json");
     if (!meta) {
         std::cerr << "memory_regions.json not found\n";
         return 1;
@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
     while ((pos = contents.find("\"base\":", pos)) != std::string::npos) {
         size_t start = contents.find_first_of("0123456789", pos);
         size_t end = contents.find_first_not_of("0123456789", start);
-        uint64_t base = std::stoull(contents.substr(start, end - start));
+        uint64_t region_base = std::stoull(contents.substr(start, end - start));
 
         size_t size_pos = contents.find("\"size\":", end);
         size_t size_start = contents.find_first_of("0123456789", size_pos);
@@ -85,16 +85,16 @@ int main(int argc, char** argv) {
 
         // ---- Page-align reservation ----
         const size_t page = 4096;
-        uint64_t aligned_base = base & ~(page - 1);
-        uint64_t end_addr = base + size;
+        uint64_t aligned_base = region_base & ~(page - 1);
+        uint64_t end_addr = region_base + size;
         uint64_t aligned_end = (end_addr + page - 1) & ~(page - 1);
         size_t aligned_size = aligned_end - aligned_base;
-        size_t offset = base - aligned_base;
+        size_t offset = region_base - aligned_base;
 
         void* reserved = nullptr;
         hsa_status_t st = hsa_amd_vmem_address_reserve(&reserved, aligned_size, aligned_base, 0);
         if (st != HSA_STATUS_SUCCESS) {
-            std::cerr << "reserve failed at 0x" << std::hex << base << "\n";
+            std::cerr << "reserve failed at 0x" << std::hex << region_base << "\n";
             return 1;
         }
 
@@ -126,8 +126,8 @@ int main(int argc, char** argv) {
         }
 
         std::stringstream fname;
-        fname << base << "/memory/region_"
-              << std::hex << base << ".bin";
+        fname << capture_dir << "/memory/region_"
+              << std::hex << region_base << ".bin";
 
         std::ifstream blobf(fname.str(), std::ios::binary);
         std::vector<char> blob((std::istreambuf_iterator<char>(blobf)),
@@ -141,7 +141,7 @@ int main(int argc, char** argv) {
             const char* msg = nullptr;
             hsa_status_string(st, &msg);
             std::cerr << "memory copy failed for region base 0x"
-                      << std::hex << base
+                      << std::hex << region_base
                       << " size " << std::dec << size
                       << " status: " << (msg ? msg : "unknown")
                       << "\n";
@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
     // STAGE 2: LOAD EXECUTABLE AFTER MEMORY RESTORE
     // ==========================================================
 
-    std::ifstream hsaco_file(base + "/kernel.hsaco", std::ios::binary);
+    std::ifstream hsaco_file(capture_dir + "/kernel.hsaco", std::ios::binary);
     if (!hsaco_file) {
         std::cerr << "kernel.hsaco not found\n";
         return 1;
@@ -218,7 +218,7 @@ int main(int argc, char** argv) {
         &group_segment_size);
 
     // ---- Parse dispatch.json for dimensions ----
-    std::ifstream dfile(base + "/dispatch.json");
+    std::ifstream dfile(capture_dir + "/dispatch.json");
     std::string dcontents((std::istreambuf_iterator<char>(dfile)),
                            std::istreambuf_iterator<char>());
 
@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
     void* kernarg = nullptr;
     hsa_amd_memory_pool_allocate(backing_pool, kernarg_size, 0, &kernarg);
 
-    std::ifstream kf(base + "/kernarg.bin", std::ios::binary);
+    std::ifstream kf(capture_dir + "/kernarg.bin", std::ios::binary);
     std::vector<char> kblob((std::istreambuf_iterator<char>(kf)),
                              std::istreambuf_iterator<char>());
     memcpy(kernarg, kblob.data(), kblob.size());
