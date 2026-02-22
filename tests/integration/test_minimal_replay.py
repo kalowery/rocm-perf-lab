@@ -39,3 +39,13 @@ def test_minimal_isolate_and_replay(tmp_path):
 
     # Run full VM replay
     run(["rocm-perf", "replay", "full-vm", "--capture-dir", str(capture_dir)])
+
+    # Multi-iteration replay test (5 iterations)
+    result = subprocess.run([
+        "rocm-perf", "replay", "full-vm",
+        "--capture-dir", str(capture_dir),
+        "--iterations", "5"
+    ], capture_output=True, text=True, check=True)
+
+    assert "Iterations: 5" in result.stdout
+    assert "Average GPU time:" in result.stdout
