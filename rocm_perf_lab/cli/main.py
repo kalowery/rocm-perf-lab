@@ -30,7 +30,8 @@ def replay_full_vm(
         typer.echo("Replay binary not built. Run CMake build in rocm_perf_lab/replay.")
         raise typer.Exit(code=1)
 
-    result = subprocess.run([str(binary), capture_dir], cwd=binary.parent)
+    capture_path = Path(capture_dir).resolve()
+    result = subprocess.run([str(binary), str(capture_path)], cwd=binary.parent)
     raise typer.Exit(code=result.returncode)
 
 
@@ -50,7 +51,8 @@ def replay_reserve_check(
         typer.echo("Diagnostic binary not built. Run CMake build in rocm_perf_lab/replay.")
         raise typer.Exit(code=1)
 
-    result = subprocess.run([str(binary), capture_dir], cwd=binary.parent)
+    capture_path = Path(capture_dir).resolve()
+    result = subprocess.run([str(binary), str(capture_path)], cwd=binary.parent)
     raise typer.Exit(code=result.returncode)
 
 
