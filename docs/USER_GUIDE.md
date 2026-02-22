@@ -2,6 +2,8 @@
 
 rocm-perf-lab is a profiling and guarded optimization framework for HIP workloads targeting **gfx942-class GPUs (MI300X / MI325)**.
 
+> 📘 For full kernel isolation and replay documentation, see [`REPLAY.md`](REPLAY.md)
+
 Validated on:
 
 - AMD Instinct MI300X (gfx942)

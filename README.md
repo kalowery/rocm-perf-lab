@@ -54,6 +54,8 @@ Produces structured JSON including:
 - Automatic rollback on regressions
 
 ### 8. Kernel Isolation & VA-Faithful Replay
+
+> 📘 See the full replay reference: [`docs/REPLAY.md`](docs/REPLAY.md)
 - HSA Tools API–based kernel interception (no LD_PRELOAD hacks)
 - Captures HSACO, kernarg, dispatch geometry, and full device memory snapshot
 - Reconstructs original GPU virtual address layout using AMD VM APIs
