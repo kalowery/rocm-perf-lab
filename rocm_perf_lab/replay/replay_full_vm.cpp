@@ -39,6 +39,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // ---- Dump process memory map after hsa_init ----
+    {
+        std::ifstream maps("/proc/self/maps");
+        std::cerr << "==== /proc/self/maps AFTER hsa_init ====\n";
+        std::cerr << maps.rdbuf();
+        std::cerr << "=========================================\n";
+    }
+
     hsa_iterate_agents(find_gpu, nullptr);
 
     // ==========================================================
