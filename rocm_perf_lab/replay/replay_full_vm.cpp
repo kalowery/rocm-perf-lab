@@ -25,6 +25,15 @@ int main(int argc, char** argv) {
     }
 
     std::string capture_dir = argv[1];
+
+    // ---- Dump process memory map before HSA init / VM restore ----
+    {
+        std::ifstream maps("/proc/self/maps");
+        std::cerr << "==== /proc/self/maps BEFORE VM RESTORE ====\n";
+        std::cerr << maps.rdbuf();
+        std::cerr << "============================================\n";
+    }
+
     if (hsa_init() != HSA_STATUS_SUCCESS) {
         std::cerr << "hsa_init failed\n";
         return 1;
