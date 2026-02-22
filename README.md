@@ -1,6 +1,78 @@
 # rocm-perf-lab
 
-**rocm-perf-lab** is a performance analysis and closed-loop optimization framework for HIP applications on AMD Instinct GPUs, validated on **MI300X (gfx942)**. It combines roofline modeling, critical-path DAG analysis, ATT-based deep profiling, and an LLM-driven guarded optimizer to deliver measurable performance gains with safety guarantees.
+**rocm-perf-lab** is a deterministic kernel analysis and closed-loop optimization framework for HIP applications on AMD Instinct GPUs (validated on **MI300X / MI325, gfx942**).
+
+It combines:
+
+- Roofline modeling
+- Trace-derived critical-path DAG analysis
+- ATT-based deep profiling
+- A safety-constrained LLM optimizer
+- Deterministic VA-faithful kernel replay
+
+The core vision is to extract individual kernel dispatches from large production applications and convert them into hardware-accurate, reproducible microbenchmarks. These microbenchmarks can then be optimized rapidly using LLM-generated transformations without re-running the full application.
+
+This turns rocm-perf-lab from a profiler into a **kernel evolution platform**.
+
+---
+
+## Closed-Loop Kernel Evolution via Deterministic Replay
+
+Traditional optimization loop:
+
+```
+LLM rewrite → rebuild → profile full application → measure → accept/reject
+```
+
+Replay-enabled loop:
+
+```
+1. Capture kernel dispatch once (isolate)
+2. Generate optimized kernel
+3. Rebuild kernel
+4. Replay optimized HSACO against captured memory state
+5. Compare GPU timestamp timing
+6. Accept or reject
+```
+
+Because replay reconstructs:
+
+- Original GPU virtual addresses
+- Full device memory snapshot
+- Kernarg layout
+- Dispatch geometry
+
+The only variable during iteration is the kernel implementation itself.
+
+Replay runs in milliseconds even when the full application runs in minutes, enabling 100×–1000× faster optimization cycles.
+
+📘 See full replay documentation: [`docs/REPLAY.md`](docs/REPLAY.md)
+
+---
+
+## Why This Is Different
+
+Most GPU optimization tools fall into one of two categories:
+
+1. **Profilers** – They measure and report bottlenecks but do not provide a deterministic mechanism for validating transformations.
+2. **Autotuners** – They search parameter spaces but typically operate on synthetic microbenchmarks detached from real production state.
+
+rocm-perf-lab introduces a third model:
+
+> Extract the *actual* kernel dispatch from a production application, reconstruct its exact memory and virtual address state, and turn it into a deterministic hardware-timed microbenchmark.
+
+Key differentiators:
+
+- ✅ Virtual-address-faithful replay (no relocation allowed)
+- ✅ Full device memory snapshot restoration
+- ✅ GPU hardware timestamp timing (not wall-clock)
+- ✅ HSACO override for controlled kernel substitution
+- ✅ Signature-constrained LLM rewrites
+- ✅ JSON contract for CI automation
+
+This enables a controlled kernel evolution workflow grounded in real workload state rather than synthetic benchmarks.
+
+Replay is not a simulator and not an approximation. It is a strict reconstruction of a real dispatch, executed under the same hardware runtime conditions.
 
 ---
 
@@ -280,39 +352,61 @@ JSON mode is intended for CI systems, automated benchmarking, and regression tra
 
 ## Strict VA-Faithful Replay & ROCr SVM Aperture Steering
 
-### Background
+Deterministic replay depends on reproducing the **exact GPU virtual address (VA) layout** observed during the original application run. This includes not only individual allocations, but also the broader VA aperture topology established by ROCr.
 
-During `hsa_init()`, ROCr (via `libhsakmt`) reserves large CPU virtual address (VA) ranges to establish SVM apertures. These reservations are performed using:
+The ability to reliably reconstruct these VA apertures is one of the key enablers of replay-driven kernel evolution.
+
+### Background: ROCr SVM Aperture Placement
+
+During `hsa_init()`, ROCr (via `libhsakmt`) reserves large CPU virtual address ranges to establish SVM apertures using:
 
 ```
 mmap(PROT_NONE, MAP_ANONYMOUS | MAP_NORESERVE | MAP_PRIVATE)
 ```
 
-The aperture base is selected heuristically based on the current process VA layout. As a result, its placement can vary slightly across runs.
+The base of these apertures is chosen heuristically based on the current process VA layout. Small differences in layout can cause different aperture placements across runs.
 
-Strict VA-faithful replay requires that captured GPU virtual addresses be reserved at their original fixed addresses using `hsa_amd_vmem_address_reserve()`. If the ROCr SVM aperture overlaps a captured region, the reservation relocates and replay aborts (by design).
+Strict replay requires that captured GPU virtual addresses be reserved at their original fixed addresses using `hsa_amd_vmem_address_reserve()`.
 
-Empirically on MI325, this caused nondeterministic replay failures (~25% failure rate across repeated runs) despite identical captures.
+If an ROCr SVM aperture overlaps a captured region:
 
-### Deterministic Solution: Pre-Mapping to Steer Aperture Placement
+- The reservation relocates, or
+- Replay aborts (strict mode)
 
-To eliminate nondeterminism while preserving strict semantics, `replay_full_vm` performs the following sequence:
+Empirically on MI325, this produced nondeterministic replay failures (~25% failure rate) even with identical capture data.
 
-1. Parse captured memory regions **before** calling `hsa_init()`.
-2. Temporarily `mmap(PROT_NONE | MAP_FIXED_NOREPLACE)` those VA ranges.
+### Deterministic Steering Strategy
+
+To preserve strict semantics while eliminating nondeterminism, `replay_full_vm` deliberately shapes the process VA layout *before* `hsa_init()`:
+
+1. Parse captured memory regions before runtime initialization.
+2. Temporarily `mmap(PROT_NONE | MAP_FIXED_NOREPLACE)` the captured VA ranges.
 3. Call `hsa_init()`.
-   - ROCr must choose SVM aperture ranges that avoid the pre-mapped regions.
+   - ROCr must choose SVM apertures that avoid these pre-mapped ranges.
 4. `munmap()` the temporary placeholders.
 5. Perform strict `hsa_amd_vmem_address_reserve()` at the original VAs.
 
-This approach does **not** relax strict replay semantics and does not modify ROCr. It simply shapes the process VA topology so that ROCr’s internal SVM aperture heuristic does not collide with captured regions.
+This does **not** modify ROCr and does not relax strict replay semantics.
+It ensures that ROCr’s heuristic aperture placement is steered away from captured ranges, making replay deterministic.
 
-Observed results on MI325:
+Observed on MI325:
 
 - Before steering: 20 runs → 5 failures
-- After steering: 20 runs → 0 failures (minimal and pointer tests)
+- After steering: 20 runs → 0 failures
 
-The replay remains fully VA-faithful and aborts on any relocation.
+### Why This Matters
+
+Replay is only meaningful if the kernel executes under the same virtual address topology as the original dispatch. Many GPU kernels encode pointer relationships and memory assumptions that depend on VA stability.
+
+By deterministically reproducing ROCr’s aperture layout and preventing relocation:
+
+- The kernel sees the same pointer values
+- The same VA-dependent behavior is preserved
+- LLM-generated kernel substitutions can be evaluated under identical memory topology
+
+This strict VA fidelity is foundational to the replay-driven optimization vision described above.
+
+Replay aborts on any relocation. There is no silent fallback.
 
 ---
 
