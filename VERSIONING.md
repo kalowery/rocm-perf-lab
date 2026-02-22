@@ -1,3 +1,19 @@
+# Versioning
+
+## v0.3-strict-replay-deterministic (2026-02-22)
+
+### Highlights
+- Eliminated nondeterministic failures in strict VA-faithful replay on CDNA GPUs (MI325).
+- Implemented pre-mmap steering mechanism to avoid ROCr SVM aperture collisions during `hsa_init()`.
+- Replay remains strictly VA-faithful and aborts on any relocation.
+- Added detailed documentation in README and source explaining ROCr SVM behavior and deterministic solution.
+
+### Impact
+- Before: ~25% replay failure rate under repeated runs.
+- After: 0% failures across repeated 20-run stress tests (minimal and pointer-chase kernels).
+
+---
+
 # Versioning Policy — rocm-perf-lab
 
 `rocm-perf-lab` follows Semantic Versioning:
