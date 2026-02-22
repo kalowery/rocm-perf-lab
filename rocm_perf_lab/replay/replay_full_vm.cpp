@@ -20,6 +20,71 @@ static hsa_status_t find_gpu(hsa_agent_t agent, void*) {
     return HSA_STATUS_SUCCESS;
 }
 
+#include <unistd.h>
+
+struct ReplayMetadata {
+    std::string gpu_agent;
+    std::string rocm_version;
+    pid_t pid;
+};
+
+struct ReplayResult {
+    ReplayMetadata metadata;
+    size_t iterations;
+    bool recopy;
+    std::vector<uint64_t> raw_ns;
+
+    double avg_us;
+    double min_us;
+    double max_us;
+};
+
+static void print_json_output(const ReplayResult& r) {
+    std::cout << "{\n";
+    std::cout << "  \"execution\": {\n";
+    std::cout << "    \"iterations\": " << r.iterations << ",\n";
+    std::cout << "    \"recopy\": " << (r.recopy ? "true" : "false") << "\n";
+    std::cout << "  },\n";
+    std::cout << "  \"timing\": {\n";
+    std::cout << "    \"unit\": \"microseconds\",\n";
+    std::cout << "    \"average\": " << r.avg_us << ",\n";
+    std::cout << "    \"min\": " << r.min_us << ",\n";
+    std::cout << "    \"max\": " << r.max_us << "\n";
+    std::cout << "  },\n";
+    std::cout << "  \"environment\": {\n";
+    std::cout << "    \"gpu_agent\": \"" << r.metadata.gpu_agent << "\",\n";
+    std::cout << "    \"rocm_version\": \"" << r.metadata.rocm_version << "\",\n";
+    std::cout << "    \"pid\": " << r.metadata.pid << "\n";
+    std::cout << "  }\n";
+    std::cout << "}\n";
+}
+
+static ReplayMetadata collect_metadata(hsa_agent_t agent) {
+    ReplayMetadata meta{};
+
+    // GPU agent name
+    char name[64] = {};
+    if (hsa_agent_get_info(agent, HSA_AGENT_INFO_NAME, name) == HSA_STATUS_SUCCESS) {
+        meta.gpu_agent = name;
+    } else {
+        meta.gpu_agent = "unknown";
+    }
+
+    // ROCm runtime version
+    uint16_t major = 0, minor = 0;
+    if (hsa_system_get_info(HSA_SYSTEM_INFO_VERSION_MAJOR, &major) == HSA_STATUS_SUCCESS &&
+        hsa_system_get_info(HSA_SYSTEM_INFO_VERSION_MINOR, &minor) == HSA_STATUS_SUCCESS) {
+        meta.rocm_version = std::to_string(major) + "." + std::to_string(minor);
+    } else {
+        meta.rocm_version = "unknown";
+    }
+
+    // PID
+    meta.pid = getpid();
+
+    return meta;
+}
+
 int main(int argc, char** argv) {
 
     if (argc < 2) {
@@ -32,6 +97,7 @@ int main(int argc, char** argv) {
 
     size_t iterations = 1;
     bool recopy = true;
+    bool json_output = false;
 
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -121,6 +187,12 @@ int main(int argc, char** argv) {
     }
 
     hsa_iterate_agents(find_gpu, nullptr);
+
+    // Collect metadata and initialize result structure
+    ReplayResult result{};
+    result.metadata = collect_metadata(g_gpu_agent);
+    result.iterations = iterations;
+    result.recopy = recopy;
 
     // ==========================================================
     // STAGE 2: SELECT BACKING POOL
@@ -342,8 +414,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::vector<uint64_t> durations;
-    durations.reserve(iterations);
+    result.raw_ns.clear();
+    result.raw_ns.reserve(iterations);
 
     restore_memory();
 
@@ -394,28 +466,37 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        durations.push_back(time.end - time.start);
+        result.raw_ns.push_back(time.end - time.start);
 
         hsa_signal_store_relaxed(completion_signal, 1);
     }
 
-    if (!durations.empty()) {
-        uint64_t min = durations[0];
-        uint64_t max = durations[0];
+    if (!result.raw_ns.empty()) {
+        uint64_t min = result.raw_ns[0];
+        uint64_t max = result.raw_ns[0];
         uint64_t sum = 0;
 
-        for (auto d : durations) {
+        for (auto d : result.raw_ns) {
             if (d < min) min = d;
             if (d > max) max = d;
             sum += d;
         }
 
-        double avg_ns = double(sum) / durations.size();
-        std::cout << "Iterations: " << iterations << "\n";
-        std::cout << "Mode: " << (recopy ? "stateless" : "stateful") << "\n";
-        std::cout << "Average GPU time: " << avg_ns / 1000.0 << " us\n";
-        std::cout << "Min: " << min / 1000.0 << " us\n";
-        std::cout << "Max: " << max / 1000.0 << " us\n";
+        double avg_ns = double(sum) / result.raw_ns.size();
+
+        result.avg_us = avg_ns / 1000.0;
+        result.min_us = min / 1000.0;
+        result.max_us = max / 1000.0;
+
+        if (json_output) {
+            print_json_output(result);
+        } else {
+            std::cout << "Iterations: " << iterations << "\n";
+            std::cout << "Mode: " << (recopy ? "stateless" : "stateful") << "\n";
+            std::cout << "Average GPU time: " << result.avg_us << " us\n";
+            std::cout << "Min: " << result.min_us << " us\n";
+            std::cout << "Max: " << result.max_us << " us\n";
+        }
     }
 
     hsa_shut_down();

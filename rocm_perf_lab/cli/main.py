@@ -18,7 +18,8 @@ replay_app = typer.Typer(help="Replay and VM diagnostics tools.")
 def replay_full_vm(
     capture_dir: str = typer.Option(..., "--capture-dir", help="Path to isolate capture directory."),
     iterations: int = typer.Option(1, "--iterations", help="Number of dispatch iterations."),
-    no_recopy: bool = typer.Option(False, "--no-recopy", help="Disable memory recopy between iterations.")
+    no_recopy: bool = typer.Option(False, "--no-recopy", help="Disable memory recopy between iterations."),
+    json: bool = typer.Option(False, "--json", help="Emit structured JSON output.")
 ):
     """
     Perform full VM-faithful replay using reconstructed device memory.
@@ -39,6 +40,9 @@ def replay_full_vm(
 
     if no_recopy:
         cmd.append("--no-recopy")
+
+    if json:
+        cmd.append("--json")
 
     result = subprocess.run(cmd)
     raise typer.Exit(code=result.returncode)
