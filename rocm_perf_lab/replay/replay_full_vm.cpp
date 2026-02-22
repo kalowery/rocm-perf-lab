@@ -1,5 +1,6 @@
 #include <hsa/hsa.h>
 #include <hsa/hsa_ext_amd.h>
+
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -20,19 +21,25 @@ static hsa_status_t find_gpu(hsa_agent_t agent, void*) {
 }
 
 int main(int argc, char** argv) {
+
     if (argc < 2) {
-        std::cerr << "Usage: rocm_perf_replay_full_vm <capture_dir>\n";
+        std::cerr << "Usage: rocm_perf_replay_full_vm <capture_dir> "
+                     "[--iterations N] [--no-recopy]\n";
         return 1;
     }
 
     std::string capture_dir = argv[1];
 
-    // ---- Dump initial maps ----
-    {
-        std::ifstream maps("/proc/self/maps");
-        std::cerr << "==== /proc/self/maps BEFORE hsa_init ====\n";
-        std::cerr << maps.rdbuf();
-        std::cerr << "=========================================\n";
+    size_t iterations = 1;
+    bool recopy = true;
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--iterations" && i + 1 < argc) {
+            iterations = std::stoull(argv[++i]);
+        } else if (arg == "--no-recopy") {
+            recopy = false;
+        }
     }
 
     // ==========================================================
@@ -48,7 +55,7 @@ int main(int argc, char** argv) {
     std::string contents((std::istreambuf_iterator<char>(meta)),
                           std::istreambuf_iterator<char>());
 
-    struct Region {
+    struct RegionMeta {
         uint64_t base;
         size_t size;
         uint64_t aligned_base;
@@ -56,10 +63,11 @@ int main(int argc, char** argv) {
         size_t offset;
     };
 
-    std::vector<Region> regions;
+    std::vector<RegionMeta> regions;
 
     size_t pos = 0;
     while ((pos = contents.find("\"base\":", pos)) != std::string::npos) {
+
         size_t start = contents.find_first_of("0123456789", pos);
         size_t end = contents.find_first_not_of("0123456789", start);
         uint64_t region_base = std::stoull(contents.substr(start, end - start));
@@ -83,24 +91,6 @@ int main(int argc, char** argv) {
     // ==========================================================
     // STAGE 0.5: PRE-MMAP TO STEER ROCr SVM APERTURE
     // ==========================================================
-    //
-    // ROCr (via libhsakmt) reserves large SVM aperture ranges during
-    // hsa_init() using mmap(PROT_NONE). The aperture base is selected
-    // heuristically based on the current process VA layout.
-    //
-    // If a captured VA region overlaps that aperture, strict
-    // hsa_amd_vmem_address_reserve() will relocate and replay aborts.
-    //
-    // To make strict replay deterministic, we temporarily mmap the
-    // captured VA ranges BEFORE hsa_init(). This forces ROCr to choose
-    // alternate aperture locations that avoid those ranges.
-    //
-    // After hsa_init(), we munmap these placeholders and then perform
-    // strict hsa_amd_vmem_address_reserve() at the original VAs.
-    //
-    // This does NOT relax strict replay semantics. It only shapes
-    // the process VA topology so ROCr's internal aperture heuristic
-    // cannot collide with captured regions.
 
     struct PreMap { void* addr; size_t size; };
     std::vector<PreMap> premaps;
@@ -112,14 +102,13 @@ int main(int argc, char** argv) {
                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
                           -1,
                           0);
-
         if (addr != MAP_FAILED) {
             premaps.push_back({addr, r.aligned_size});
         }
     }
 
     // ==========================================================
-    // STAGE 1: HSA INIT
+    // STAGE 1: INIT HSA
     // ==========================================================
 
     if (hsa_init() != HSA_STATUS_SUCCESS) {
@@ -127,18 +116,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    {
-        std::ifstream maps("/proc/self/maps");
-        std::cerr << "==== /proc/self/maps AFTER hsa_init ====\n";
-        std::cerr << maps.rdbuf();
-        std::cerr << "=========================================\n";
-    }
-
-    // Remove placeholders
-    for (const auto& pm : premaps) {
+    for (auto& pm : premaps) {
         munmap(pm.addr, pm.size);
     }
-    premaps.clear();
 
     hsa_iterate_agents(find_gpu, nullptr);
 
@@ -152,9 +132,14 @@ int main(int argc, char** argv) {
     auto pool_cb = [](hsa_amd_memory_pool_t pool, void* data) {
         auto* ctx = reinterpret_cast<std::pair<hsa_amd_memory_pool_t*, bool*>*>(data);
         hsa_amd_segment_t segment;
-        hsa_amd_memory_pool_get_info(pool, HSA_AMD_MEMORY_POOL_INFO_SEGMENT, &segment);
+        hsa_amd_memory_pool_get_info(pool,
+            HSA_AMD_MEMORY_POOL_INFO_SEGMENT,
+            &segment);
         bool alloc_allowed = false;
-        hsa_amd_memory_pool_get_info(pool, HSA_AMD_MEMORY_POOL_INFO_RUNTIME_ALLOC_ALLOWED, &alloc_allowed);
+        hsa_amd_memory_pool_get_info(pool,
+            HSA_AMD_MEMORY_POOL_INFO_RUNTIME_ALLOC_ALLOWED,
+            &alloc_allowed);
+
         if (segment == HSA_AMD_SEGMENT_GLOBAL && alloc_allowed) {
             *ctx->first = pool;
             *ctx->second = true;
@@ -167,64 +152,59 @@ int main(int argc, char** argv) {
     hsa_amd_agent_iterate_memory_pools(g_gpu_agent, pool_cb, &pool_ctx);
 
     if (!found_pool) {
-        std::cerr << "No backing pool found\n";
+        std::cerr << "No suitable memory pool found\n";
         return 1;
     }
 
     // ==========================================================
-    // STAGE 3: STRICT VM RESERVE + RESTORE
+    // STAGE 3: STRICT RESERVE + MAP (NO COPY YET)
     // ==========================================================
+
+    struct RegionRuntime {
+        void* reserved;
+        size_t size;
+        size_t offset;
+        std::vector<char> blob;
+    };
+
+    std::vector<RegionRuntime> runtime_regions;
 
     for (const auto& r : regions) {
 
         void* reserved = nullptr;
-        hsa_status_t st =
-            hsa_amd_vmem_address_reserve(&reserved,
+
+        if (hsa_amd_vmem_address_reserve(&reserved,
                                          r.aligned_size,
                                          r.aligned_base,
-                                         0);
+                                         0) != HSA_STATUS_SUCCESS ||
+            reinterpret_cast<uint64_t>(reserved) != r.aligned_base) {
 
-        if (st != HSA_STATUS_SUCCESS) {
-            std::cerr << "reserve failed at 0x"
+            std::cerr << "Relocation detected or reserve failed at 0x"
                       << std::hex << r.base << "\n";
             return 1;
         }
 
-        if (reinterpret_cast<uint64_t>(reserved) != r.aligned_base) {
-            std::cerr << "Relocation detected for region 0x"
-                      << std::hex << r.base
-                      << " requested 0x" << r.aligned_base
-                      << " got 0x" << reinterpret_cast<uint64_t>(reserved)
-                      << "\n";
-            return 1;
-        }
-
         hsa_amd_vmem_alloc_handle_t handle{};
-        st = hsa_amd_vmem_handle_create(
-                backing_pool,
-                r.aligned_size,
-                (hsa_amd_memory_type_t)0,
-                0,
-                &handle);
-        if (st != HSA_STATUS_SUCCESS) {
-            std::cerr << "handle create failed\n";
+        if (hsa_amd_vmem_handle_create(backing_pool,
+                                       r.aligned_size,
+                                       (hsa_amd_memory_type_t)0,
+                                       0,
+                                       &handle) != HSA_STATUS_SUCCESS) {
             return 1;
         }
 
-        st = hsa_amd_vmem_map(reserved, r.aligned_size, 0, handle, 0);
-        if (st != HSA_STATUS_SUCCESS) {
-            std::cerr << "vm map failed\n";
+        if (hsa_amd_vmem_map(reserved,
+                             r.aligned_size,
+                             0,
+                             handle,
+                             0) != HSA_STATUS_SUCCESS) {
             return 1;
         }
 
         hsa_amd_memory_access_desc_t access{};
         access.agent_handle = g_gpu_agent;
         access.permissions = HSA_ACCESS_PERMISSION_RW;
-        st = hsa_amd_vmem_set_access(reserved, r.aligned_size, &access, 1);
-        if (st != HSA_STATUS_SUCCESS) {
-            std::cerr << "set access failed\n";
-            return 1;
-        }
+        hsa_amd_vmem_set_access(reserved, r.aligned_size, &access, 1);
 
         std::stringstream fname;
         fname << capture_dir << "/memory/region_"
@@ -234,97 +214,48 @@ int main(int argc, char** argv) {
         std::vector<char> blob((std::istreambuf_iterator<char>(blobf)),
                                 std::istreambuf_iterator<char>());
 
-        void* copy_dst =
-            static_cast<void*>(
-                static_cast<uint8_t*>(reserved) + r.offset);
-
-        st = hsa_memory_copy(copy_dst, blob.data(), r.size);
-        if (st != HSA_STATUS_SUCCESS) {
-            std::cerr << "memory copy failed\n";
-            return 1;
-        }
+        runtime_regions.push_back({
+            reserved,
+            r.size,
+            r.offset,
+            std::move(blob)
+        });
     }
 
-    std::cout << "Memory reconstructed.\n";
-
     // ==========================================================
-    // STAGE 4: LOAD EXECUTABLE + DISPATCH KERNEL
+    // STAGE 4: LOAD EXECUTABLE
     // ==========================================================
 
     std::ifstream hsaco_file(capture_dir + "/kernel.hsaco", std::ios::binary);
-    if (!hsaco_file) {
-        std::cerr << "kernel.hsaco not found\n";
-        return 1;
-    }
-
     std::vector<char> hsaco((std::istreambuf_iterator<char>(hsaco_file)),
                              std::istreambuf_iterator<char>());
 
     hsa_code_object_reader_t reader;
-    if (hsa_code_object_reader_create_from_memory(hsaco.data(), hsaco.size(), &reader)
-        != HSA_STATUS_SUCCESS) {
-        std::cerr << "Failed to create code object reader\n";
-        return 1;
-    }
+    hsa_code_object_reader_create_from_memory(
+        hsaco.data(), hsaco.size(), &reader);
 
     hsa_executable_t executable;
-    if (hsa_executable_create(HSA_PROFILE_FULL,
-                              HSA_EXECUTABLE_STATE_UNFROZEN,
-                              nullptr,
-                              &executable) != HSA_STATUS_SUCCESS) {
-        std::cerr << "Failed to create executable\n";
-        return 1;
-    }
+    hsa_executable_create(HSA_PROFILE_FULL,
+                          HSA_EXECUTABLE_STATE_UNFROZEN,
+                          nullptr,
+                          &executable);
 
-    if (hsa_executable_load_agent_code_object(executable, g_gpu_agent, reader, nullptr, nullptr)
-        != HSA_STATUS_SUCCESS) {
-        std::cerr << "Failed to load code object\n";
-        return 1;
-    }
+    hsa_executable_load_agent_code_object(
+        executable, g_gpu_agent, reader, nullptr, nullptr);
 
-    if (hsa_executable_freeze(executable, nullptr) != HSA_STATUS_SUCCESS) {
-        std::cerr << "Failed to freeze executable\n";
-        return 1;
-    }
+    hsa_executable_freeze(executable, nullptr);
 
-    // Resolve first kernel symbol
     hsa_executable_symbol_t kernel_symbol{};
-    bool found_symbol = false;
-
-    auto sym_cb = [](hsa_executable_t,
-                     hsa_executable_symbol_t sym,
-                     void* data) -> hsa_status_t {
-        auto* flag = reinterpret_cast<bool*>(data);
-        uint32_t type;
-        hsa_executable_symbol_get_info(sym,
-            HSA_EXECUTABLE_SYMBOL_INFO_TYPE,
-            &type);
-        if (type == HSA_SYMBOL_KIND_KERNEL) {
-            *flag = true;
-            return HSA_STATUS_INFO_BREAK;
-        }
-        return HSA_STATUS_SUCCESS;
-    };
-
-    hsa_executable_iterate_symbols(executable, sym_cb, &found_symbol);
-
-    if (!found_symbol) {
-        std::cerr << "No kernel symbol found\n";
-        return 1;
-    }
-
-    // For simplicity, reload and capture first kernel symbol
     hsa_executable_iterate_symbols(executable,
         [](hsa_executable_t,
            hsa_executable_symbol_t sym,
            void* data) -> hsa_status_t {
-            auto* out = reinterpret_cast<hsa_executable_symbol_t*>(data);
             uint32_t type;
             hsa_executable_symbol_get_info(sym,
                 HSA_EXECUTABLE_SYMBOL_INFO_TYPE,
                 &type);
             if (type == HSA_SYMBOL_KIND_KERNEL) {
-                *out = sym;
+                *reinterpret_cast<hsa_executable_symbol_t*>(data) = sym;
                 return HSA_STATUS_INFO_BREAK;
             }
             return HSA_STATUS_SUCCESS;
@@ -349,92 +280,143 @@ int main(int argc, char** argv) {
         HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_PRIVATE_SEGMENT_SIZE,
         &private_segment);
 
-    // Load dispatch.json for grid/block
+    // Parse grid/block
     std::ifstream dfile(capture_dir + "/dispatch.json");
     std::string dcontents((std::istreambuf_iterator<char>(dfile)),
                            std::istreambuf_iterator<char>());
 
     auto extract_int = [&](const std::string& key) -> uint32_t {
         auto p = dcontents.find(key);
-        if (p == std::string::npos) return 1;
         auto s = dcontents.find_first_of("0123456789", p);
         auto e = dcontents.find_first_not_of("0123456789", s);
-        return static_cast<uint32_t>(std::stoul(dcontents.substr(s, e - s)));
+        return std::stoul(dcontents.substr(s, e - s));
     };
 
     uint32_t grid_x  = extract_int("\"grid\": [");
     uint32_t block_x = extract_int("\"block\": [");
 
-    // Allocate kernarg
+    // ==========================================================
+    // STAGE 5: MULTI-ITERATION DISPATCH WITH PROFILING
+    // ==========================================================
+
+    auto restore_memory = [&]() {
+        for (auto& rr : runtime_regions) {
+            void* dst = static_cast<void*>(
+                static_cast<uint8_t*>(rr.reserved) + rr.offset);
+            hsa_memory_copy(dst, rr.blob.data(), rr.size);
+        }
+    };
+
     void* kernarg = nullptr;
-    if (hsa_amd_memory_pool_allocate(backing_pool, kernarg_size, 0, &kernarg)
-        != HSA_STATUS_SUCCESS) {
-        std::cerr << "Failed to allocate kernarg\n";
-        return 1;
-    }
+    hsa_amd_memory_pool_allocate(backing_pool,
+                                 kernarg_size,
+                                 0,
+                                 &kernarg);
 
     std::ifstream kf(capture_dir + "/kernarg.bin", std::ios::binary);
     std::vector<char> kblob((std::istreambuf_iterator<char>(kf)),
                              std::istreambuf_iterator<char>());
     memcpy(kernarg, kblob.data(), kblob.size());
 
-    // Create queue
     hsa_queue_t* queue = nullptr;
-    if (hsa_queue_create(g_gpu_agent,
-                         128,
-                         HSA_QUEUE_TYPE_MULTI,
-                         nullptr,
-                         nullptr,
-                         private_segment,
-                         group_segment,
-                         &queue) != HSA_STATUS_SUCCESS) {
-        std::cerr << "Queue creation failed\n";
+    hsa_queue_create(g_gpu_agent,
+                     128,
+                     HSA_QUEUE_TYPE_MULTI,
+                     nullptr,
+                     nullptr,
+                     private_segment,
+                     group_segment,
+                     &queue);
+
+    hsa_status_t pst = hsa_amd_profiling_set_profiler_enabled(queue, 1);
+    if (pst != HSA_STATUS_SUCCESS) {
+        std::cerr << "Failed to enable profiling\n";
         return 1;
     }
 
     hsa_signal_t completion_signal;
-    hsa_signal_create(1, 0, nullptr, &completion_signal);
+    hsa_status_t ss = hsa_signal_create(1, 0, nullptr, &completion_signal);
 
-    uint64_t index = hsa_queue_load_write_index_relaxed(queue);
-
-    auto* packet = reinterpret_cast<hsa_kernel_dispatch_packet_t*>(
-        queue->base_address) + (index % queue->size);
-
-    memset(packet, 0, sizeof(*packet));
-
-    packet->setup = 1 << HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
-    packet->workgroup_size_x = block_x;
-    packet->workgroup_size_y = 1;
-    packet->workgroup_size_z = 1;
-
-    packet->grid_size_x = grid_x;
-    packet->grid_size_y = 1;
-    packet->grid_size_z = 1;
-
-    packet->kernel_object = kernel_object;
-    packet->kernarg_address = kernarg;
-    packet->private_segment_size = private_segment;
-    packet->group_segment_size = group_segment;
-    packet->completion_signal = completion_signal;
-
-    uint16_t header =
-        (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) |
-        (1 << HSA_PACKET_HEADER_BARRIER);
-
-    packet->header = header;
-
-    hsa_queue_store_write_index_relaxed(queue, index + 1);
-    hsa_signal_store_relaxed(queue->doorbell_signal, index);
-
-    while (hsa_signal_wait_relaxed(
-               completion_signal,
-               HSA_SIGNAL_CONDITION_EQ,
-               0,
-               UINT64_MAX,
-               HSA_WAIT_STATE_ACTIVE) != 0) {
+    if (ss != HSA_STATUS_SUCCESS) {
+        std::cerr << "Failed to create completion signal\n";
+        return 1;
     }
 
-    std::cout << "Dispatch completed.\n";
+    std::vector<uint64_t> durations;
+    durations.reserve(iterations);
+
+    restore_memory();
+
+    for (size_t iter = 0; iter < iterations; ++iter) {
+
+        if (iter > 0 && recopy) {
+            restore_memory();
+        }
+
+        uint64_t index = hsa_queue_load_write_index_relaxed(queue);
+        auto* packet = reinterpret_cast<hsa_kernel_dispatch_packet_t*>(
+            queue->base_address) + (index % queue->size);
+
+        memset(packet, 0, sizeof(*packet));
+
+        packet->setup = 1 << HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
+        packet->workgroup_size_x = block_x;
+        packet->grid_size_x = grid_x;
+        packet->kernel_object = kernel_object;
+        packet->kernarg_address = kernarg;
+        packet->private_segment_size = private_segment;
+        packet->group_segment_size = group_segment;
+        packet->completion_signal = completion_signal;
+
+        uint16_t header =
+            (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) |
+            (1 << HSA_PACKET_HEADER_BARRIER);
+        packet->header = header;
+
+        hsa_queue_store_write_index_relaxed(queue, index + 1);
+        hsa_signal_store_relaxed(queue->doorbell_signal, index);
+
+        while (hsa_signal_wait_relaxed(
+                   completion_signal,
+                   HSA_SIGNAL_CONDITION_EQ,
+                   0,
+                   UINT64_MAX,
+                   HSA_WAIT_STATE_ACTIVE) != 0) {}
+
+        hsa_amd_profiling_dispatch_time_t time{};
+        hsa_status_t dt = hsa_amd_profiling_get_dispatch_time(
+            g_gpu_agent,
+            completion_signal,
+            &time);
+
+        if (dt != HSA_STATUS_SUCCESS) {
+            std::cerr << "Failed to get dispatch time\n";
+            return 1;
+        }
+
+        durations.push_back(time.end - time.start);
+
+        hsa_signal_store_relaxed(completion_signal, 1);
+    }
+
+    if (!durations.empty()) {
+        uint64_t min = durations[0];
+        uint64_t max = durations[0];
+        uint64_t sum = 0;
+
+        for (auto d : durations) {
+            if (d < min) min = d;
+            if (d > max) max = d;
+            sum += d;
+        }
+
+        double avg_ns = double(sum) / durations.size();
+        std::cout << "Iterations: " << iterations << "\n";
+        std::cout << "Mode: " << (recopy ? "stateless" : "stateful") << "\n";
+        std::cout << "Average GPU time: " << avg_ns / 1000.0 << " us\n";
+        std::cout << "Min: " << min / 1000.0 << " us\n";
+        std::cout << "Max: " << max / 1000.0 << " us\n";
+    }
 
     hsa_shut_down();
     return 0;
