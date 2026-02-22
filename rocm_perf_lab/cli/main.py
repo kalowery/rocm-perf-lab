@@ -16,10 +16,13 @@ replay_app = typer.Typer(help="Replay and VM diagnostics tools.")
 
 @replay_app.command("full-vm")
 def replay_full_vm(
-    capture_dir: str = typer.Option(..., "--capture-dir", help="Path to isolate capture directory.")
+    capture_dir: str = typer.Option(..., "--capture-dir", help="Path to isolate capture directory."),
+    iterations: int = typer.Option(1, "--iterations", help="Number of dispatch iterations."),
+    no_recopy: bool = typer.Option(False, "--no-recopy", help="Disable memory recopy between iterations.")
 ):
     """
     Perform full VM-faithful replay using reconstructed device memory.
+    Supports multi-iteration dispatch and GPU timing.
     """
     from pathlib import Path
     import subprocess
@@ -31,7 +34,13 @@ def replay_full_vm(
         raise typer.Exit(code=1)
 
     capture_path = Path(capture_dir).resolve()
-    result = subprocess.run([str(binary), str(capture_path)])
+
+    cmd = [str(binary), str(capture_path), "--iterations", str(iterations)]
+
+    if no_recopy:
+        cmd.append("--no-recopy")
+
+    result = subprocess.run(cmd)
     raise typer.Exit(code=result.returncode)
 
 
