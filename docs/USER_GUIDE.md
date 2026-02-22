@@ -18,7 +18,7 @@ It combines architecture-aware roofline modeling, trace-derived critical path an
 ## Baseline Profiling
 
 ```bash
-rocm-perf-lab profile ./app
+rocm-perf profile ./app
 ```
 
 This performs:
@@ -53,7 +53,7 @@ hipcc softmax_testbed.cpp -O3 -o softmax_testbed
 ### Step 1 — Run Profiling
 
 ```bash
-rocm-perf-lab profile ./softmax_testbed
+rocm-perf profile ./softmax_testbed
 ```
 
 Profiling flow:

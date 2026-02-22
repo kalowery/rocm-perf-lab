@@ -197,6 +197,46 @@ Replay reports average GPU time and total wall time.
 
 ---
 
+---
+
+## Strict VA-Faithful Replay & ROCr SVM Aperture Steering
+
+### Background
+
+During `hsa_init()`, ROCr (via `libhsakmt`) reserves large CPU virtual address (VA) ranges to establish SVM apertures. These reservations are performed using:
+
+```
+mmap(PROT_NONE, MAP_ANONYMOUS | MAP_NORESERVE | MAP_PRIVATE)
+```
+
+The aperture base is selected heuristically based on the current process VA layout. As a result, its placement can vary slightly across runs.
+
+Strict VA-faithful replay requires that captured GPU virtual addresses be reserved at their original fixed addresses using `hsa_amd_vmem_address_reserve()`. If the ROCr SVM aperture overlaps a captured region, the reservation relocates and replay aborts (by design).
+
+Empirically on MI325, this caused nondeterministic replay failures (~25% failure rate across repeated runs) despite identical captures.
+
+### Deterministic Solution: Pre-Mapping to Steer Aperture Placement
+
+To eliminate nondeterminism while preserving strict semantics, `replay_full_vm` performs the following sequence:
+
+1. Parse captured memory regions **before** calling `hsa_init()`.
+2. Temporarily `mmap(PROT_NONE | MAP_FIXED_NOREPLACE)` those VA ranges.
+3. Call `hsa_init()`.
+   - ROCr must choose SVM aperture ranges that avoid the pre-mapped regions.
+4. `munmap()` the temporary placeholders.
+5. Perform strict `hsa_amd_vmem_address_reserve()` at the original VAs.
+
+This approach does **not** relax strict replay semantics and does not modify ROCr. It simply shapes the process VA topology so that ROCr’s internal SVM aperture heuristic does not collide with captured regions.
+
+Observed results on MI325:
+
+- Before steering: 20 runs → 5 failures
+- After steering: 20 runs → 0 failures (minimal and pointer tests)
+
+The replay remains fully VA-faithful and aborts on any relocation.
+
+---
+
 ## Running Integration Tests (MI325 / CDNA GPUs)
 
 The repository includes end‑to‑end integration tests that validate:

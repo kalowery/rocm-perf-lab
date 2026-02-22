@@ -83,6 +83,24 @@ int main(int argc, char** argv) {
     // ==========================================================
     // STAGE 0.5: PRE-MMAP TO STEER ROCr SVM APERTURE
     // ==========================================================
+    //
+    // ROCr (via libhsakmt) reserves large SVM aperture ranges during
+    // hsa_init() using mmap(PROT_NONE). The aperture base is selected
+    // heuristically based on the current process VA layout.
+    //
+    // If a captured VA region overlaps that aperture, strict
+    // hsa_amd_vmem_address_reserve() will relocate and replay aborts.
+    //
+    // To make strict replay deterministic, we temporarily mmap the
+    // captured VA ranges BEFORE hsa_init(). This forces ROCr to choose
+    // alternate aperture locations that avoid those ranges.
+    //
+    // After hsa_init(), we munmap these placeholders and then perform
+    // strict hsa_amd_vmem_address_reserve() at the original VAs.
+    //
+    // This does NOT relax strict replay semantics. It only shapes
+    // the process VA topology so ROCr's internal aperture heuristic
+    // cannot collide with captured regions.
 
     struct PreMap { void* addr; size_t size; };
     std::vector<PreMap> premaps;
