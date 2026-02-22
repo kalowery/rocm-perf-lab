@@ -138,7 +138,13 @@ int main(int argc, char** argv) {
 
         st = hsa_memory_copy(copy_dst, blob.data(), size);
         if (st != HSA_STATUS_SUCCESS) {
-            std::cerr << "memory copy failed\n";
+            const char* msg = nullptr;
+            hsa_status_string(st, &msg);
+            std::cerr << "memory copy failed for region base 0x"
+                      << std::hex << base
+                      << " size " << std::dec << size
+                      << " status: " << (msg ? msg : "unknown")
+                      << "\n";
             return 1;
         }
 
