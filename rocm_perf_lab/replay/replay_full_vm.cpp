@@ -32,6 +32,9 @@ struct ReplayResult {
     ReplayMetadata metadata;
     size_t iterations;
     bool recopy;
+
+    std::string kernel_name;
+
     std::vector<uint64_t> raw_ns;
 
     double avg_us;
@@ -41,6 +44,9 @@ struct ReplayResult {
 
 static void print_json_output(const ReplayResult& r) {
     std::cout << "{\n";
+    std::cout << "  \"kernel\": {\n";
+    std::cout << "    \"name\": \"" << r.kernel_name << "\"\n";
+    std::cout << "  },\n";
     std::cout << "  \"execution\": {\n";
     std::cout << "    \"iterations\": " << r.iterations << ",\n";
     std::cout << "    \"recopy\": " << (r.recopy ? "true" : "false") << "\n";
@@ -364,8 +370,20 @@ int main(int argc, char** argv) {
         return std::stoul(dcontents.substr(s, e - s));
     };
 
+    auto extract_string = [&](const std::string& key) -> std::string {
+        auto p = dcontents.find(key);
+        if (p == std::string::npos) return "unknown";
+        auto first_quote = dcontents.find('"', p + key.size());
+        if (first_quote == std::string::npos) return "unknown";
+        first_quote++;
+        auto second_quote = dcontents.find('"', first_quote);
+        if (second_quote == std::string::npos) return "unknown";
+        return dcontents.substr(first_quote, second_quote - first_quote);
+    };
+
     uint32_t grid_x  = extract_int("\"grid\": [");
     uint32_t block_x = extract_int("\"block\": [");
+    result.kernel_name = extract_string("\"kernel_name\":");
 
     // ==========================================================
     // STAGE 5: MULTI-ITERATION DISPATCH WITH PROFILING
