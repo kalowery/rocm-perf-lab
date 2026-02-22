@@ -197,6 +197,83 @@ Replay reports average GPU time and total wall time.
 
 ---
 
+## JSON Output (Replay)
+
+The replay engine supports a structured JSON mode:
+
+```bash
+rocm-perf replay full-vm \
+  --capture-dir isolate_capture_123456 \
+  --iterations 5 \
+  --json
+```
+
+When `--json` is specified, only valid JSON is emitted to stdout (no human-readable text).
+
+### Example
+
+```json
+{
+  "kernel": {
+    "name": "pointer_chase(Node*, int*)"
+  },
+  "execution": {
+    "iterations": 5,
+    "mode": "stateless"
+  },
+  "timing": {
+    "unit": "microseconds",
+    "average": 3.06,
+    "min": 2.88,
+    "max": 3.44
+  },
+  "environment": {
+    "gpu_agent": "gfx942",
+    "rocm_version": "1.18",
+    "pid": 1487354
+  }
+}
+```
+
+### Field Definitions
+
+**kernel.name**  
+Demangled kernel symbol name captured during isolation. Backend clone annotations (e.g., `[clone .kd]`) are stripped. Falls back to mangled name if necessary.
+
+**execution.iterations**  
+Number of kernel dispatch iterations executed during replay.
+
+**execution.mode**  
+- `"stateless"` – Device memory is restored from the captured snapshot before each iteration.
+- `"stateful"` – Device memory is not restored between iterations (`--no-recopy`). Kernel mutations accumulate across iterations.
+
+**timing.unit**  
+Unit of timing statistics. Currently always `"microseconds"`.
+
+**timing.average**  
+Mean GPU execution time across all iterations.
+
+**timing.min**  
+Minimum observed GPU execution time.
+
+**timing.max**  
+Maximum observed GPU execution time.
+
+Timing values are derived from GPU hardware timestamps via the HSA profiling API and reflect device execution time only (not host wall-clock time).
+
+**environment.gpu_agent**  
+Name of the GPU agent executing the replay (e.g., `gfx942`).
+
+**environment.rocm_version**  
+ROCm runtime version reported by the HSA runtime.
+
+**environment.pid**  
+Process ID of the replay process.
+
+JSON mode is intended for CI systems, automated benchmarking, and regression tracking.
+
+---
+
 ---
 
 ## Strict VA-Faithful Replay & ROCr SVM Aperture Steering
