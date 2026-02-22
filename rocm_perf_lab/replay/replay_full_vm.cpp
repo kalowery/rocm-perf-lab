@@ -247,9 +247,195 @@ int main(int argc, char** argv) {
 
     std::cout << "Memory reconstructed.\n";
 
-    // ---- Rest of file (HSACO load + dispatch) remains identical to original ----
+    // ==========================================================
+    // STAGE 4: LOAD EXECUTABLE + DISPATCH KERNEL
+    // ==========================================================
 
-    std::cout << "Replay complete.\n";
+    std::ifstream hsaco_file(capture_dir + "/kernel.hsaco", std::ios::binary);
+    if (!hsaco_file) {
+        std::cerr << "kernel.hsaco not found\n";
+        return 1;
+    }
+
+    std::vector<char> hsaco((std::istreambuf_iterator<char>(hsaco_file)),
+                             std::istreambuf_iterator<char>());
+
+    hsa_code_object_reader_t reader;
+    if (hsa_code_object_reader_create_from_memory(hsaco.data(), hsaco.size(), &reader)
+        != HSA_STATUS_SUCCESS) {
+        std::cerr << "Failed to create code object reader\n";
+        return 1;
+    }
+
+    hsa_executable_t executable;
+    if (hsa_executable_create(HSA_PROFILE_FULL,
+                              HSA_EXECUTABLE_STATE_UNFROZEN,
+                              nullptr,
+                              &executable) != HSA_STATUS_SUCCESS) {
+        std::cerr << "Failed to create executable\n";
+        return 1;
+    }
+
+    if (hsa_executable_load_agent_code_object(executable, g_gpu_agent, reader, nullptr, nullptr)
+        != HSA_STATUS_SUCCESS) {
+        std::cerr << "Failed to load code object\n";
+        return 1;
+    }
+
+    if (hsa_executable_freeze(executable, nullptr) != HSA_STATUS_SUCCESS) {
+        std::cerr << "Failed to freeze executable\n";
+        return 1;
+    }
+
+    // Resolve first kernel symbol
+    hsa_executable_symbol_t kernel_symbol{};
+    bool found_symbol = false;
+
+    auto sym_cb = [](hsa_executable_t,
+                     hsa_executable_symbol_t sym,
+                     void* data) -> hsa_status_t {
+        auto* flag = reinterpret_cast<bool*>(data);
+        uint32_t type;
+        hsa_executable_symbol_get_info(sym,
+            HSA_EXECUTABLE_SYMBOL_INFO_TYPE,
+            &type);
+        if (type == HSA_SYMBOL_KIND_KERNEL) {
+            *flag = true;
+            return HSA_STATUS_INFO_BREAK;
+        }
+        return HSA_STATUS_SUCCESS;
+    };
+
+    hsa_executable_iterate_symbols(executable, sym_cb, &found_symbol);
+
+    if (!found_symbol) {
+        std::cerr << "No kernel symbol found\n";
+        return 1;
+    }
+
+    // For simplicity, reload and capture first kernel symbol
+    hsa_executable_iterate_symbols(executable,
+        [](hsa_executable_t,
+           hsa_executable_symbol_t sym,
+           void* data) -> hsa_status_t {
+            auto* out = reinterpret_cast<hsa_executable_symbol_t*>(data);
+            uint32_t type;
+            hsa_executable_symbol_get_info(sym,
+                HSA_EXECUTABLE_SYMBOL_INFO_TYPE,
+                &type);
+            if (type == HSA_SYMBOL_KIND_KERNEL) {
+                *out = sym;
+                return HSA_STATUS_INFO_BREAK;
+            }
+            return HSA_STATUS_SUCCESS;
+        },
+        &kernel_symbol);
+
+    uint64_t kernel_object = 0;
+    uint32_t kernarg_size = 0;
+    uint32_t group_segment = 0;
+    uint32_t private_segment = 0;
+
+    hsa_executable_symbol_get_info(kernel_symbol,
+        HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_OBJECT,
+        &kernel_object);
+    hsa_executable_symbol_get_info(kernel_symbol,
+        HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_KERNARG_SEGMENT_SIZE,
+        &kernarg_size);
+    hsa_executable_symbol_get_info(kernel_symbol,
+        HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_GROUP_SEGMENT_SIZE,
+        &group_segment);
+    hsa_executable_symbol_get_info(kernel_symbol,
+        HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_PRIVATE_SEGMENT_SIZE,
+        &private_segment);
+
+    // Load dispatch.json for grid/block
+    std::ifstream dfile(capture_dir + "/dispatch.json");
+    std::string dcontents((std::istreambuf_iterator<char>(dfile)),
+                           std::istreambuf_iterator<char>());
+
+    auto extract_int = [&](const std::string& key) -> uint32_t {
+        auto p = dcontents.find(key);
+        if (p == std::string::npos) return 1;
+        auto s = dcontents.find_first_of("0123456789", p);
+        auto e = dcontents.find_first_not_of("0123456789", s);
+        return static_cast<uint32_t>(std::stoul(dcontents.substr(s, e - s)));
+    };
+
+    uint32_t grid_x  = extract_int("\"grid\": [");
+    uint32_t block_x = extract_int("\"block\": [");
+
+    // Allocate kernarg
+    void* kernarg = nullptr;
+    if (hsa_amd_memory_pool_allocate(backing_pool, kernarg_size, 0, &kernarg)
+        != HSA_STATUS_SUCCESS) {
+        std::cerr << "Failed to allocate kernarg\n";
+        return 1;
+    }
+
+    std::ifstream kf(capture_dir + "/kernarg.bin", std::ios::binary);
+    std::vector<char> kblob((std::istreambuf_iterator<char>(kf)),
+                             std::istreambuf_iterator<char>());
+    memcpy(kernarg, kblob.data(), kblob.size());
+
+    // Create queue
+    hsa_queue_t* queue = nullptr;
+    if (hsa_queue_create(g_gpu_agent,
+                         128,
+                         HSA_QUEUE_TYPE_MULTI,
+                         nullptr,
+                         nullptr,
+                         private_segment,
+                         group_segment,
+                         &queue) != HSA_STATUS_SUCCESS) {
+        std::cerr << "Queue creation failed\n";
+        return 1;
+    }
+
+    hsa_signal_t completion_signal;
+    hsa_signal_create(1, 0, nullptr, &completion_signal);
+
+    uint64_t index = hsa_queue_load_write_index_relaxed(queue);
+
+    auto* packet = reinterpret_cast<hsa_kernel_dispatch_packet_t*>(
+        queue->base_address) + (index % queue->size);
+
+    memset(packet, 0, sizeof(*packet));
+
+    packet->setup = 1 << HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
+    packet->workgroup_size_x = block_x;
+    packet->workgroup_size_y = 1;
+    packet->workgroup_size_z = 1;
+
+    packet->grid_size_x = grid_x;
+    packet->grid_size_y = 1;
+    packet->grid_size_z = 1;
+
+    packet->kernel_object = kernel_object;
+    packet->kernarg_address = kernarg;
+    packet->private_segment_size = private_segment;
+    packet->group_segment_size = group_segment;
+    packet->completion_signal = completion_signal;
+
+    uint16_t header =
+        (HSA_PACKET_TYPE_KERNEL_DISPATCH << HSA_PACKET_HEADER_TYPE) |
+        (1 << HSA_PACKET_HEADER_BARRIER);
+
+    packet->header = header;
+
+    hsa_queue_store_write_index_relaxed(queue, index + 1);
+    hsa_signal_store_relaxed(queue->doorbell_signal, index);
+
+    while (hsa_signal_wait_relaxed(
+               completion_signal,
+               HSA_SIGNAL_CONDITION_EQ,
+               0,
+               UINT64_MAX,
+               HSA_WAIT_STATE_ACTIVE) != 0) {
+    }
+
+    std::cout << "Dispatch completed.\n";
+
     hsa_shut_down();
     return 0;
 }
