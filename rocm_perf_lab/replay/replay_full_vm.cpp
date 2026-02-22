@@ -97,6 +97,14 @@ int main(int argc, char** argv) {
             std::cerr << "reserve failed at 0x" << std::hex << region_base << "\n";
             return 1;
         }
+        if (reinterpret_cast<uint64_t>(reserved) != aligned_base) {
+            std::cerr << "Relocation detected for region 0x"
+                      << std::hex << region_base
+                      << " requested 0x" << aligned_base
+                      << " got 0x" << reinterpret_cast<uint64_t>(reserved)
+                      << "\n";
+            return 1;
+        }
 
         hsa_amd_vmem_alloc_handle_t handle{};
         st = hsa_amd_vmem_handle_create(
