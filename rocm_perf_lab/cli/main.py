@@ -31,7 +31,7 @@ def replay_full_vm(
         raise typer.Exit(code=1)
 
     capture_path = Path(capture_dir).resolve()
-    result = subprocess.run([str(binary), str(capture_path)], cwd=binary.parent)
+    result = subprocess.run([str(binary), str(capture_path)])
     raise typer.Exit(code=result.returncode)
 
 
@@ -52,7 +52,7 @@ def replay_reserve_check(
         raise typer.Exit(code=1)
 
     capture_path = Path(capture_dir).resolve()
-    result = subprocess.run([str(binary), str(capture_path)], cwd=binary.parent)
+    result = subprocess.run([str(binary), str(capture_path)])
     raise typer.Exit(code=result.returncode)
 
 
