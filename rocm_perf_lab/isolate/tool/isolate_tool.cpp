@@ -6,6 +6,8 @@
 #include <vector>
 #include <mutex>
 #include <cstring>
+#include <unistd.h>
+#include <sstream>
 #include <fstream>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -463,6 +465,22 @@ static hsa_status_t intercepted_symbol_get_info(
     return status;
 }
 
+static std::string g_capture_dir;
+
+static void init_capture_dir()
+{
+    if (!g_capture_dir.empty()) return;
+
+    pid_t pid = getpid();
+    std::ostringstream ss;
+    ss << "isolate_capture_" << pid;
+    g_capture_dir = ss.str();
+
+    mkdir(g_capture_dir.c_str(), 0755);
+    std::string memdir = g_capture_dir + "/memory";
+    mkdir(memdir.c_str(), 0755);
+}
+
 static void snapshot_device_memory()
 {
     FILE* sentinel = fopen("snapshot_called.txt", "w");
@@ -477,9 +495,9 @@ static void snapshot_device_memory()
         regions_copy = g_device_regions;
     }
 
-    mkdir("isolate_capture/memory", 0755);
+    init_capture_dir();
 
-    FILE* meta = fopen("isolate_capture/memory_regions.json", "w");
+    FILE* meta = fopen((g_capture_dir + "/memory_regions.json").c_str(), "w");
     if (!meta) return;
 
     fprintf(meta, "{\n  \"regions\": [\n");
@@ -498,7 +516,8 @@ static void snapshot_device_memory()
         if (status == HSA_STATUS_SUCCESS) {
             char filename[256];
             snprintf(filename, sizeof(filename),
-                     "isolate_capture/memory/region_%lx.bin",
+                     "%s/memory/region_%lx.bin",
+                     g_capture_dir.c_str(),
                      r.base);
 
             FILE* f = fopen(filename, "wb");
@@ -589,7 +608,7 @@ static void OnSubmitPackets(
                info.kernarg_size);
 
         // Persist to filesystem
-        system("mkdir -p isolate_capture");
+        init_capture_dir();
 
         // Persist HSACO blob if available
         std::vector<uint8_t> hsaco_copy;
@@ -602,7 +621,7 @@ static void OnSubmitPackets(
         }
 
         if (!hsaco_copy.empty()) {
-            std::ofstream hsaco("isolate_capture/kernel.hsaco", std::ios::binary);
+            std::ofstream hsaco(g_capture_dir + "/kernel.hsaco", std::ios::binary);
             hsaco.write(reinterpret_cast<const char*>(hsaco_copy.data()), hsaco_copy.size());
             hsaco.close();
         }
@@ -629,7 +648,7 @@ static void OnSubmitPackets(
         uint32_t wavefront_size = 0;
         hsa_agent_get_info(agent, HSA_AGENT_INFO_WAVEFRONT_SIZE, &wavefront_size);
 
-        std::ofstream meta("isolate_capture/dispatch.json");
+        std::ofstream meta(g_capture_dir + "/dispatch.json");
         meta << "{\n";
         meta << "  \"mangled_name\": \"" << info.mangled_name << "\",\n";
         meta << "  \"demangled_name\": \"" << info.demangled_name << "\",\n";
@@ -646,7 +665,7 @@ static void OnSubmitPackets(
         meta << "}\n";
         meta.close();
 
-        std::ofstream bin("isolate_capture/kernarg.bin", std::ios::binary);
+        std::ofstream bin(g_capture_dir + "/kernarg.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char*>(kernarg_copy.data()), kernarg_copy.size());
         bin.close();
 
