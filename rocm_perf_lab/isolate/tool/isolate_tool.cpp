@@ -466,6 +466,8 @@ static hsa_status_t intercepted_symbol_get_info(
 }
 
 static std::string g_capture_dir;
+static uint64_t g_captured_kernarg_base = 0;
+static uint32_t g_captured_kernarg_size = 0;
 
 static void init_capture_dir()
 {
@@ -526,14 +528,21 @@ static void snapshot_device_memory()
                 fclose(f);
             }
 
+            bool contains_kernarg =
+                (g_captured_kernarg_size > 0) &&
+                (r.base <= g_captured_kernarg_base) &&
+                (g_captured_kernarg_base < r.base + r.size);
+
             fprintf(meta,
                 "    {\"base\": %lu, \"size\": %zu, "
                 "\"is_pool\": %s, \"is_vmem\": %s, "
+                "\"contains_kernarg\": %s, "
                 "\"handle\": %lu, \"access\": %u}%s\n",
                 r.base,
                 r.size,
                 r.is_pool_alloc ? "true" : "false",
                 r.is_vmem ? "true" : "false",
+                contains_kernarg ? "true" : "false",
                 r.handle,
                 r.access_mask,
                 (i + 1 < regions_copy.size()) ? "," : "");
@@ -606,6 +615,10 @@ static void OnSubmitPackets(
         memcpy(kernarg_copy.data(),
                reinterpret_cast<const void*>(pkt.kernarg_address),
                info.kernarg_size);
+
+        // Record captured kernarg range for region tagging
+        g_captured_kernarg_base = reinterpret_cast<uint64_t>(pkt.kernarg_address);
+        g_captured_kernarg_size = info.kernarg_size;
 
         // Persist to filesystem
         init_capture_dir();
