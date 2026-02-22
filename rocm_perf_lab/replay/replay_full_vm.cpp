@@ -385,7 +385,17 @@ int main(int argc, char** argv) {
 
     uint32_t grid_x  = extract_int("\"grid\": [");
     uint32_t block_x = extract_int("\"block\": [");
-    result.kernel_name = extract_string("\"kernel_name\":");
+
+    std::string demangled = extract_string("\"demangled_name\":");
+    std::string mangled   = extract_string("\"mangled_name\":");
+
+    if (demangled != "unknown") {
+        result.kernel_name = demangled;
+    } else if (mangled != "unknown") {
+        result.kernel_name = mangled;
+    } else {
+        result.kernel_name = "unknown";
+    }
 
     // ==========================================================
     // STAGE 5: MULTI-ITERATION DISPATCH WITH PROFILING
