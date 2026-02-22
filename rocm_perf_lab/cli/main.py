@@ -19,7 +19,8 @@ def replay_full_vm(
     capture_dir: str = typer.Option(..., "--capture-dir", help="Path to isolate capture directory."),
     iterations: int = typer.Option(1, "--iterations", help="Number of dispatch iterations."),
     no_recopy: bool = typer.Option(False, "--no-recopy", help="Disable memory recopy between iterations."),
-    json: bool = typer.Option(False, "--json", help="Emit structured JSON output.")
+    json: bool = typer.Option(False, "--json", help="Emit structured JSON output."),
+    hsaco: str = typer.Option(None, "--hsaco", help="Override HSACO path for replay.")
 ):
     """
     Perform full VM-faithful replay using reconstructed device memory.
@@ -43,6 +44,9 @@ def replay_full_vm(
 
     if json:
         cmd.append("--json")
+
+    if hsaco:
+        cmd.extend(["--hsaco", hsaco])
 
     result = subprocess.run(cmd)
     raise typer.Exit(code=result.returncode)

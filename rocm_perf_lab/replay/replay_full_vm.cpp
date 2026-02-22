@@ -104,6 +104,7 @@ int main(int argc, char** argv) {
     size_t iterations = 1;
     bool recopy = true;
     bool json_output = false;
+    std::string override_hsaco_path;
 
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -113,6 +114,8 @@ int main(int argc, char** argv) {
             recopy = false;
         } else if (arg == "--json") {
             json_output = true;
+        } else if (arg == "--hsaco" && i + 1 < argc) {
+            override_hsaco_path = argv[++i];
         }
     }
 
@@ -306,7 +309,16 @@ int main(int argc, char** argv) {
     // STAGE 4: LOAD EXECUTABLE
     // ==========================================================
 
-    std::ifstream hsaco_file(capture_dir + "/kernel.hsaco", std::ios::binary);
+    std::string hsaco_path = override_hsaco_path.empty()
+        ? (capture_dir + "/kernel.hsaco")
+        : override_hsaco_path;
+
+    std::ifstream hsaco_file(hsaco_path, std::ios::binary);
+    if (!hsaco_file) {
+        std::cerr << "Failed to open HSACO: " << hsaco_path << "\n";
+        return 1;
+    }
+
     std::vector<char> hsaco((std::istreambuf_iterator<char>(hsaco_file)),
                              std::istreambuf_iterator<char>());
 
