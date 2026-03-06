@@ -399,8 +399,22 @@ int main(int argc, char** argv) {
         return dcontents.substr(first_quote, second_quote - first_quote);
     };
 
-    uint32_t grid_x  = extract_int("\"grid\": [");
-    uint32_t block_x = extract_int("\"block\": [");
+    auto extract_int_array = [&](const std::string& key, uint32_t out[3]) {
+        out[0] = out[1] = out[2] = 1;
+        auto p = dcontents.find(key);
+        if (p == std::string::npos) return;
+        for (int i = 0; i < 3; i++) {
+            auto s = dcontents.find_first_of("0123456789", p);
+            if (s == std::string::npos) break;
+            auto e = dcontents.find_first_not_of("0123456789", s);
+            out[i] = std::stoul(dcontents.substr(s, e - s));
+            p = e;
+        }
+    };
+
+    uint32_t grid[3], block[3];
+    extract_int_array("\"grid\":", grid);
+    extract_int_array("\"block\":", block);
 
     std::string demangled = extract_string("\"demangled_name\":");
     std::string mangled   = extract_string("\"mangled_name\":");
@@ -483,9 +497,17 @@ int main(int argc, char** argv) {
 
         memset(packet, 0, sizeof(*packet));
 
-        packet->setup = 1 << HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
-        packet->workgroup_size_x = block_x;
-        packet->grid_size_x = grid_x;
+        uint32_t dims = 1;
+        if (grid[2] > 1 || block[2] > 1) dims = 3;
+        else if (grid[1] > 1 || block[1] > 1) dims = 2;
+
+        packet->setup = dims << HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
+        packet->workgroup_size_x = block[0];
+        packet->workgroup_size_y = block[1];
+        packet->workgroup_size_z = block[2];
+        packet->grid_size_x = grid[0];
+        packet->grid_size_y = grid[1];
+        packet->grid_size_z = grid[2];
         packet->kernel_object = kernel_object;
         packet->kernarg_address = kernarg;
         packet->private_segment_size = private_segment;
