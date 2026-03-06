@@ -295,9 +295,14 @@ int main(int argc, char** argv) {
         fname << capture_dir << "/memory/region_"
               << std::hex << r.base << ".bin";
 
-        std::ifstream blobf(fname.str(), std::ios::binary);
-        std::vector<char> blob((std::istreambuf_iterator<char>(blobf)),
-                                std::istreambuf_iterator<char>());
+        std::ifstream blobf(fname.str(), std::ios::binary | std::ios::ate);
+        std::vector<char> blob;
+        if (blobf) {
+            auto fsize = blobf.tellg();
+            blobf.seekg(0);
+            blob.resize(static_cast<size_t>(fsize));
+            blobf.read(blob.data(), fsize);
+        }
 
         runtime_regions.push_back({
             reserved,
